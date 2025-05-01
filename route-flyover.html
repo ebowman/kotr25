@@ -352,62 +352,103 @@
     // We've simplified the animation and removed pre-calculation 
     // to reduce potential causes of glitches
     
-    // Function to create a smoothed version of the route with adaptive smoothing
-    // This creates a path that is more smoothed when zoomed out, less when zoomed in
+    // Advanced function to create multiple levels of route smoothing for dynamic camera behavior
+    // This creates different smoothing levels that can be selected based on zoom level
     function createSmoothedRoute(coordinates) {
       // Skip if too few points
       if (coordinates.length <= 10) return [...coordinates];
       
       // Create multiple levels of smoothing for different zoom levels
-      // Level 1: Minimal smoothing (used when zoomed in)
-      // Level 2: Moderate smoothing (used at medium zoom)
-      // Level 3: Maximum smoothing (used when far zoomed out)
+      // We'll calculate different smoothing for low, medium and high zoom levels
+      // This allows more stable camera movement when zoomed out
       
-      // Determine base smoothing factor based on route length
-      const baseSmoothing = Math.max(3, Math.floor(coordinates.length / 300));
+      // ===== MULTI-LEVEL SMOOTHING APPROACH =====
       
-      // Create smoothed route with variable smoothing, preserving elevation data
+      // Determine base smoothing factors based on route length and complexity
+      // We need different smoothing levels for different zoom levels
+      const routeLength = coordinates.length;
+      const baseSmoothing = Math.max(3, Math.floor(routeLength / 300));
+      
+      // Create multi-resolution smoothed paths
       const smoothed = [];
       
       // Always include the first point
       smoothed.push([...coordinates[0]]);
       
-      // Add interior points with adaptive smoothing
-      const skipFactor = Math.max(2, Math.ceil(coordinates.length / 1000)); // Skip more points on very long routes
+      // Adapt point inclusion based on route length
+      // For longer routes, we need to skip more points to avoid excessive memory usage
+      // while still maintaining route fidelity
+      const skipFactor = Math.max(1, Math.ceil(routeLength / 1500)); 
       
-      for (let i = skipFactor; i < coordinates.length - skipFactor; i += skipFactor) {
-        // Variable smoothing window based on position in the route
-        // Use wider window in the middle of the route, narrower at endpoints
-        // This creates more natural behavior at route ends
+      // Process interior points with adaptive smoothing
+      for (let i = skipFactor; i < routeLength - skipFactor; i += skipFactor) {
+        // Create adaptive smoothing that varies based on position in the route:
+        // - More aggressive smoothing in the middle of the route
+        // - Less aggressive smoothing near endpoints
+        // - Special handling for significant elevation changes
+        // This creates more natural camera behavior at endpoints and elevation changes
+        
+        // Calculate position-based smoothing factor
+        // Distance from either end determines smoothing strength
         const positionFactor = Math.min(
-          i / coordinates.length,
-          (coordinates.length - i) / coordinates.length
-        ) * 4;
+          i / routeLength,                // Distance from start (0-1)
+          (routeLength - i) / routeLength // Distance from end (0-1)
+        ) * 4;                            // Scale up for more noticeable effect
         
-        // Window size grows with position factor (larger in middle of route)
-        const windowSize = Math.max(5, Math.round(baseSmoothing * (1 + positionFactor)));
+        // Detect elevation significance - important for hills and downhill sections
+        // We want to preserve significant elevation changes for camera look-ahead
+        let elevationSignificance = 0;
         
-        // Get weighted average of points in the smoothing window
+        if (coordinates[i].length > 2 && 
+            i > 0 && i < routeLength - 1 && 
+            coordinates[i-1].length > 2 && coordinates[i+1].length > 2) {
+          
+          // Calculate elevation change rate (gradient)
+          const elevChange = Math.abs(coordinates[i][2] - coordinates[i-1][2]);
+          const elevChangeNext = Math.abs(coordinates[i+1][2] - coordinates[i][2]);
+          
+          // Higher values = less smoothing near significant elevation changes
+          elevationSignificance = Math.min(1, (elevChange + elevChangeNext) / 10);
+        }
+        
+        // Calculate final window size for this point
+        // Smaller window = less smoothing, larger window = more smoothing
+        // Three factors affect window size:
+        // 1. Base smoothing (route length dependent)
+        // 2. Position factor (middle vs. endpoints)
+        // 3. Elevation significance (hills get less smoothing)
+        const windowSize = Math.max(5, Math.round(
+          baseSmoothing * (1 + positionFactor) * (1 - elevationSignificance * 0.5)
+        ));
+        
+        // === WEIGHTED GAUSSIAN SMOOTHING ===
+        // This produces much more natural curves than simple averaging
         let sumLng = 0;
         let sumLat = 0;
         let sumEle = 0;
         let totalWeight = 0;
         
-        // Use Gaussian-like weighting for smoother transitions
+        // Calculate weighted average with Gaussian falloff
         for (let j = i - windowSize; j <= i + windowSize; j++) {
-          if (j >= 0 && j < coordinates.length) {
+          if (j >= 0 && j < routeLength) {
             // Calculate distance-based weight with Gaussian falloff
-            // This creates more natural curves than linear weighting
             const distFactor = Math.abs(i - j) / windowSize;
-            const weight = Math.exp(-5 * distFactor * distFactor); // Gaussian-like falloff
             
+            // Steeper Gaussian falloff for more natural curves
+            // Higher exponent = steeper falloff = less influence from distant points
+            const weight = Math.exp(-5.5 * distFactor * distFactor);
+            
+            // Add weighted contribution
             sumLng += coordinates[j][0] * weight;
             sumLat += coordinates[j][1] * weight;
             totalWeight += weight;
             
-            // If elevation data exists, smooth it too
+            // Handle elevation data with special weighting to preserve route features
             if (coordinates[j].length > 2) {
-              sumEle += coordinates[j][2] * weight;
+              // For elevation, we use a modified weighting that preserves hills
+              // by reducing the amount of smoothing applied to significant changes
+              const elevWeight = weight * (1 - elevationSignificance * 0.5);
+              sumEle += coordinates[j][2] * elevWeight;
             }
           }
         }
@@ -418,18 +459,29 @@
           sumLat / totalWeight
         ];
         
-        // Add elevation if it exists (slightly smoothed)
+        // Add elevation if it exists (with modified smoothing)
         if (coordinates[i].length > 2) {
-          smoothPoint.push(sumEle / totalWeight);
+          // If elevation significance is high, use less smoothing to preserve feature
+          // This prevents camera from missing hills and valleys
+          const rawElevation = coordinates[i][2];
+          const smoothedElevation = sumEle / totalWeight;
+          
+          // Blend between raw and smoothed elevation based on significance
+          // More significant elevation changes are preserved (less smoothing)
+          const blendedElevation = 
+            (smoothedElevation * (1 - elevationSignificance * 0.7)) + 
+            (rawElevation * elevationSignificance * 0.7);
+          
+          smoothPoint.push(blendedElevation);
         }
         
         smoothed.push(smoothPoint);
       }
       
       // Always include the last point
-      smoothed.push([...coordinates[coordinates.length - 1]]);
+      smoothed.push([...coordinates[routeLength - 1]]);
       
-      console.log(`Route smoothed from ${coordinates.length} to ${smoothed.length} points with adaptive smoothing`);
+      console.log(`Route smoothed from ${routeLength} to ${smoothed.length} points with multi-level adaptive smoothing`);
       return smoothed;
     }
     
@@ -962,6 +1014,10 @@
       // Clear tracking variables
       animationStopped = false;
       prevBearing = undefined; // Reset bearing history
+      prevCameraPos = null; // Reset camera velocity tracking
+      prevCameraBearingRad = undefined;
+      prevCameraPitch = undefined;
+      prevCameraZoom = undefined;
       
       // Reset toggle button text
       toggleBtn.textContent = "Start";
@@ -1056,6 +1112,12 @@
     // Add variable to track fractional position 
     let currentPointFloat = 0;
     
+    // Variables for advanced camera interpolation with velocity damping
+    let prevCameraPos = null; // Previous camera position for velocity calculation
+    let prevCameraBearingRad = undefined; // Previous bearing for velocity calculation
+    let prevCameraPitch = undefined; // Previous pitch for velocity calculation
+    let prevCameraZoom = undefined; // Previous zoom for velocity calculation
+    
     // Variables for camera interpolation
     let cameraInterpolationActive = false;
     let cameraInterpolationStartTime = 0;
@@ -1068,6 +1130,10 @@
     let cameraTargetPitch = 45;
     let cameraStartZoom = 13;
     let cameraTargetZoom = 13;
+    
+    // Variables for adaptive path smoothing
+    let lastAppliedZoom = 0; // Track last zoom level used for path smoothing
+    let lastLookAheadIndex = 0; // Track last index used for look-ahead calculation
     
     // Clean, simplified animation function that uses our new camera system
     function animateRoute() {
@@ -1300,8 +1366,8 @@
       }
     }
     
-    // Check if the rider marker is visible within the viewport's safe area
-    // and make camera adjustments if needed, especially for downhill sections
+    // Advanced function to check rider visibility and make smooth adjustments
+    // to keep rider centered in the viewport with adaptive behavior based on zoom level
     function checkRiderVisibility() {
       // Ensure map is initialized
       if (!map || !map.getSource('point')) return;
@@ -1322,13 +1388,30 @@
         const viewportWidth = viewport.offsetWidth;
         const viewportHeight = viewport.offsetHeight;
         
-        // Define a safe area rectangle where the rider should remain visible
-        // More generous safe area to avoid constant adjustments
+        // Get current zoom for adaptive behavior
+        const currentZoom = map.getZoom();
+        
+        // Create zoom-based factors for adaptive behavior
+        // Lower zoom = wider safe area (less camera movement)
+        // Higher zoom = narrower safe area (keep centered)
+        const zoomFactor = Math.min(1, Math.max(0.3, (currentZoom - 11) / 8)); // 0.3 at zoom 11, 1.0 at zoom 19
+        
+        // Calculate ideal target position within viewport
+        // Center horizontally, slightly above vertical center
+        const idealX = viewportWidth * 0.5;  // Center horizontally
+        const idealY = viewportHeight * 0.45; // Slightly above center vertically
+        
+        // Define a safe area rectangle that's adaptive to zoom level
+        // When zoomed out: larger safe area (less frequent adjustments)
+        // When zoomed in: tighter safe area (more precise centering)
+        const safeAreaWidth = viewportWidth * (0.4 - (0.2 * zoomFactor)); // 40% to 20% of viewport width
+        const safeAreaHeight = viewportHeight * (0.4 - (0.2 * zoomFactor)); // 40% to 20% of viewport height
+        
         const safeArea = {
-          left: viewportWidth * 0.25,    // 25% from left edge
-          right: viewportWidth * 0.75,   // 75% from left edge (25% from right)
-          top: viewportHeight * 0.4,     // 40% from top 
-          bottom: viewportHeight * 0.9   // 90% from top (near bottom of screen)
+          left: idealX - (safeAreaWidth / 2),
+          right: idealX + (safeAreaWidth / 2),
+          top: idealY - (safeAreaHeight / 2),
+          bottom: idealY + (safeAreaHeight / 2)
         };
         
         // Check if the rider is outside the safe area
@@ -1347,54 +1430,73 @@
             lat: pointData.geometry.coordinates[1]
           };
           
-          // Current values
+          // Get current camera values
           const currentBearing = map.getBearing();
           
-          // Determine direction adjustments
+          // Calculate distance from rider to ideal position
+          const distanceX = riderPoint.x - idealX;
+          const distanceY = riderPoint.y - idealY;
+          
+          // Calculate adjustment strength based on distance from ideal position
+          // More distance = stronger adjustment (proportional)
+          // Apply zoom factor to make corrections stronger when zoomed in
+          const xStrength = 0.05 + (0.1 * zoomFactor);
+          const yStrength = 0.05 + (0.1 * zoomFactor);
+          
+          // Calculate look-ahead and side adjustments
+          // We scale by viewport size to make adjustments relative to screen size
           let lookAheadDistanceAdjust = 0;
           let sideDistanceAdjust = 0;
           
-          // Horizontal adjustments (left-right)
-          if (riderPoint.x < safeArea.left) {
-            // Rider is too far left - adjust side offset
-            sideDistanceAdjust = -1 * ((safeArea.left - riderPoint.x) / viewportWidth) * 0.05;
-          } else if (riderPoint.x > safeArea.right) {
-            // Rider is too far right - adjust side offset
-            sideDistanceAdjust = ((riderPoint.x - safeArea.right) / viewportWidth) * 0.05;
+          // Apply horizontal adjustment (transform to side offset)
+          // We need to consider the bearing to translate screen space to map space
+          if (Math.abs(distanceX) > safeAreaWidth / 2) {
+            sideDistanceAdjust = -1 * (distanceX / viewportWidth) * xStrength;
           }
           
-          // Vertical adjustments (top-bottom)
-          if (riderPoint.y < safeArea.top) {
-            // Rider is too high (near horizon) - decrease look-ahead, increase zoom
-            lookAheadDistanceAdjust = -1 * ((safeArea.top - riderPoint.y) / viewportHeight) * 0.05;
+          // Apply vertical adjustment (transform to look-ahead distance)
+          if (Math.abs(distanceY) > safeAreaHeight / 2) {
+            // Above ideal = negative adjustment (look less ahead)
+            // Below ideal = positive adjustment (look more ahead)
+            lookAheadDistanceAdjust = (distanceY / viewportHeight) * yStrength;
             
-            // Also adjust target zoom to come in closer
-            const zoomAdjust = ((safeArea.top - riderPoint.y) / viewportHeight) * 0.5;
-            cameraTargetZoom = Math.min(19, currentCameraZoom + zoomAdjust);
-          } else if (riderPoint.y > safeArea.bottom) {
-            // Rider is too low on screen - increase look-ahead, decrease zoom
-            lookAheadDistanceAdjust = ((riderPoint.y - safeArea.bottom) / viewportHeight) * 0.05;
-            
-            // Also adjust target pitch to look more downward
-            const pitchAdjust = ((riderPoint.y - safeArea.bottom) / viewportHeight) * 5;
-            cameraTargetPitch = Math.min(85, currentCameraPitch + pitchAdjust);
+            // For extreme cases, adjust zoom and pitch too
+            if (Math.abs(distanceY) > viewportHeight * 0.3) {
+              // If rider is way too high (near horizon)
+              if (distanceY < 0) {
+                // Increase zoom to bring rider closer
+                const zoomAdjust = Math.min(0.5, Math.abs(distanceY) / viewportHeight);
+                cameraTargetZoom = Math.min(19, currentCameraZoom + zoomAdjust);
+              } 
+              // If rider is way too low (near bottom)
+              else {
+                // Adjust pitch to look more downward
+                const pitchAdjust = Math.min(5, Math.abs(distanceY) / viewportHeight * 10);
+                cameraTargetPitch = Math.min(85, currentCameraPitch + pitchAdjust);
+              }
+            }
           }
           
-          // Apply adjustments to the target camera position
+          // Apply adjustments through our ideal camera position calculation
           // Our smooth camera system will gradually move to this target
           if (lookAheadDistanceAdjust !== 0 || sideDistanceAdjust !== 0) {
-            // Get ideal camera position for current rider position and adjust it
             const idealCameraPos = calculateIdealCameraPosition(
               riderCoord, 
               currentBearing, 
               animationSpeed,
               cameraHeight, 
               cameraTargetPitch,
-              sideDistanceAdjust, // Pass the side offset adjustment
-              lookAheadDistanceAdjust // Pass the look-ahead adjustment
+              sideDistanceAdjust,
+              lookAheadDistanceAdjust
             );
             
-            // Update the target position - our interpolation system will smoothly move there
+            // Visualize adjustment severity (optional) with color-coded marker
+            const adjustmentMagnitude = Math.sqrt(
+              Math.pow(lookAheadDistanceAdjust, 2) + 
+              Math.pow(sideDistanceAdjust, 2)
+            );
+            
+            // Set the target - the interpolation system handles smooth transition
             cameraTargetPos = idealCameraPos;
           }
         }
@@ -1580,7 +1682,7 @@
       }
     }
     
-    // Helper function to check if the rider is completely out of view
+    // Advanced function to check rider visibility with zoom-dependent safe zones
     function isRiderCompletelyOutOfView(riderPoint) {
       if (!riderPoint) return false;
       
@@ -1588,16 +1690,71 @@
       const viewportWidth = viewport.offsetWidth;
       const viewportHeight = viewport.offsetHeight;
       
-      // Check if rider is completely off screen (more conservative check)
+      // Get current zoom level
+      const currentZoom = map.getZoom();
+      
+      // Define a dynamic margin based on zoom level
+      // Lower zoom = wider margin (more conservative)
+      // Higher zoom = narrower margin (more aggressive)
+      const zoomFactor = Math.min(1, Math.max(0.3, (currentZoom - 11) / 8)); // 0.3 to 1.0
+      const margin = 50 * (1 - zoomFactor * 0.7); // 15px to 50px margin
+      
+      // Check if rider is completely off screen with dynamic margin
+      // When zoomed out, we're more conservative about calling it "out of view"
+      // When zoomed in, we're more aggressive about keeping rider centered
       return (
-        riderPoint.x < 0 ||
-        riderPoint.x > viewportWidth ||
-        riderPoint.y < 0 ||
-        riderPoint.y > viewportHeight
+        riderPoint.x < -margin ||
+        riderPoint.x > viewportWidth + margin ||
+        riderPoint.y < -margin ||
+        riderPoint.y > viewportHeight + margin
       );
     }
     
-    // Helper function to adjust camera to keep rider visible
+    // Enhanced helper function to check if rider is visible in optimal area
+    function isRiderVisible(riderPoint) {
+      if (!riderPoint) return false;
+      
+      const viewport = map.getContainer();
+      const viewportWidth = viewport.offsetWidth;
+      const viewportHeight = viewport.offsetHeight;
+      
+      // Get current zoom for adaptive behavior
+      const currentZoom = map.getZoom();
+      
+      // Create zoom-based factors for adaptive behavior
+      // Lower zoom = wider safe area (less camera movement)
+      // Higher zoom = narrower safe area (more precise centering)
+      const zoomFactor = Math.min(1, Math.max(0.3, (currentZoom - 11) / 8)); // 0.3 at zoom 11, 1.0 at zoom 19
+      
+      // Calculate ideal target position within viewport
+      // Center horizontally, slightly above center vertically
+      const idealX = viewportWidth * 0.5;  // Center horizontally
+      const idealY = viewportHeight * 0.45; // Slightly above center vertically
+      
+      // Define a safe area rectangle that's adaptive to zoom level
+      // When zoomed out: larger safe area (less frequent adjustments)
+      // When zoomed in: tighter safe area (more precise centering)
+      const safeAreaWidth = viewportWidth * (0.4 - (0.2 * zoomFactor)); // 40% to 20% of viewport width
+      const safeAreaHeight = viewportHeight * (0.4 - (0.2 * zoomFactor)); // 40% to 20% of viewport height
+      
+      const safeArea = {
+        left: idealX - (safeAreaWidth / 2),
+        right: idealX + (safeAreaWidth / 2),
+        top: idealY - (safeAreaHeight / 2),
+        bottom: idealY + (safeAreaHeight / 2)
+      };
+      
+      // Check if rider is within the optimal viewing area
+      return (
+        riderPoint.x >= safeArea.left && 
+        riderPoint.x <= safeArea.right && 
+        riderPoint.y >= safeArea.top && 
+        riderPoint.y <= safeArea.bottom
+      );
+    }
+    
+    // Advanced function to adjust camera with smooth, natural movement
+    // that's appropriate for the current zoom level and camera angle
     function adjustCameraToKeepRiderVisible(riderPoint, aggressive = true) {
       if (!riderPoint) return;
       
@@ -1605,53 +1762,120 @@
       const viewportWidth = viewport.offsetWidth;
       const viewportHeight = viewport.offsetHeight;
       
-      // Define the safe area based on whether we need aggressive adjustment
-      const safeArea = aggressive ? {
-        left: viewportWidth * 0.3,    // 30% from left
-        right: viewportWidth * 0.7,   // 70% from left
-        top: viewportHeight * 0.4,    // 40% from top
-        bottom: viewportHeight * 0.8  // 80% from top
-      } : {
-        left: 20,                     // Just inside screen
-        right: viewportWidth - 20,    // Just inside screen
-        bottom: viewportHeight - 20,  // Just inside screen
-        top: 20                       // Just inside screen
+      // Get current zoom and pitch for adaptive behavior
+      const currentZoom = map.getZoom();
+      const currentPitch = map.getPitch();
+      
+      // Create adaptive factors based on zoom and pitch
+      const zoomFactor = Math.min(1, Math.max(0.3, (currentZoom - 11) / 8)); // 0.3 to 1.0
+      const pitchFactor = currentPitch / 85; // 0 to 1.0
+      
+      // Calculate ideal target position that feels natural at the current zoom level
+      // For low pitch (looking forward), we want rider to be lower in frame
+      // For high pitch (looking down), we want rider to be closer to center
+      const idealX = viewportWidth * 0.5;  // Always center horizontally
+      const idealY = viewportHeight * (0.6 - (0.15 * pitchFactor)); // Lower at low pitch, higher at high pitch
+      
+      // Define the safe area based on zoom level and adjustment aggressiveness
+      // Aggressive = small safe area (precise centering)
+      // Non-aggressive = larger safe area (only adjust when clearly needed)
+      const safeAreaWidthPercent = aggressive ? 
+        (0.2 + (0.1 * (1 - zoomFactor))) : // 20-30% for aggressive (smaller at high zoom)
+        (0.4 + (0.2 * (1 - zoomFactor)));  // 40-60% for non-aggressive (smaller at high zoom)
+      
+      const safeAreaHeightPercent = aggressive ? 
+        (0.2 + (0.1 * (1 - zoomFactor))) : // 20-30% for aggressive (smaller at high zoom)
+        (0.4 + (0.2 * (1 - zoomFactor)));  // 40-60% for non-aggressive (smaller at high zoom)
+      
+      const safeArea = {
+        left: idealX - (viewportWidth * safeAreaWidthPercent / 2),
+        right: idealX + (viewportWidth * safeAreaWidthPercent / 2),
+        top: idealY - (viewportHeight * safeAreaHeightPercent / 2),
+        bottom: idealY + (viewportHeight * safeAreaHeightPercent / 2)
       };
       
-      // Calculate adjustments
+      // Calculate distance from rider to ideal position
+      const distanceX = riderPoint.x - idealX;
+      const distanceY = riderPoint.y - idealY;
+      
+      // Only apply adjustments if rider is outside safe area
+      const isOutsideX = riderPoint.x < safeArea.left || riderPoint.x > safeArea.right;
+      const isOutsideY = riderPoint.y < safeArea.top || riderPoint.y > safeArea.bottom;
+      
+      if (!isOutsideX && !isOutsideY) return;
+      
+      // Calculate adjustments based on distance from ideal position
+      // These are normalized to viewport size for consistent behavior
       let adjustX = 0;
       let adjustY = 0;
       
-      if (riderPoint.x < safeArea.left) {
-        adjustX = (riderPoint.x - safeArea.left) / viewportWidth;
-      } else if (riderPoint.x > safeArea.right) {
-        adjustX = (riderPoint.x - safeArea.right) / viewportWidth;
+      if (isOutsideX) {
+        adjustX = distanceX / viewportWidth;
       }
       
-      if (riderPoint.y < safeArea.top) {
-        adjustY = (riderPoint.y - safeArea.top) / viewportHeight;
-      } else if (riderPoint.y > safeArea.bottom) {
-        adjustY = (riderPoint.y - safeArea.bottom) / viewportHeight;
+      if (isOutsideY) {
+        adjustY = distanceY / viewportHeight;
       }
       
       // Get current camera settings
-      const currentCenter = map.getCenter();
-      const bearingRad = map.getBearing() * Math.PI / 180;
+      const currentBearing = map.getBearing();
+      const bearingRad = currentBearing * Math.PI / 180;
       
-      // Rotate adjustment based on camera bearing
+      // Apply bearing-adjusted transformations to get correct camera movement
+      // This is critical for natural movement when the camera is rotated
       const cosB = Math.cos(bearingRad);
       const sinB = Math.sin(bearingRad);
       const rotX = adjustX * cosB - adjustY * sinB;
       const rotY = adjustX * sinB + adjustY * cosB;
       
-      // Apply adjustment
-      const zoomFactor = Math.pow(0.5, map.getZoom() - 10);
+      // Calculate adjustment strength based on how far outside safe area
+      // and zoom level (more responsive at high zoom, more stable at low zoom)
+      const adjustStrength = aggressive ? 
+        (0.5 + (0.3 * zoomFactor)) : // 0.5-0.8 for aggressive (stronger at high zoom)
+        (0.3 + (0.2 * zoomFactor));  // 0.3-0.5 for non-aggressive (stronger at high zoom)
+      
+      // Apply adjustment through smooth pan
+      // For zoomed out view: slower, less aggressive movement
+      // For zoomed in view: faster, more precise movement
+      const panDuration = aggressive ? 
+        300 - (100 * zoomFactor) : // 200-300ms for aggressive (faster at high zoom)
+        800 - (300 * zoomFactor);  // 500-800ms for non-aggressive (faster at high zoom)
+      
+      // Apply the pan with bearing-corrected adjustments
       map.panBy([
-        rotX * viewportWidth * (aggressive ? 0.5 : 0.3),
-        rotY * viewportHeight * (aggressive ? 0.5 : 0.3)
+        rotX * viewportWidth * adjustStrength,
+        rotY * viewportHeight * adjustStrength
       ], {
-        duration: aggressive ? 500 : 1000
+        duration: panDuration,
+        easing: t => 1 - Math.pow(1 - t, 3) // Cubic ease-out for smooth deceleration
       });
+      
+      // If rider is extremely out of view, also adjust camera pitch and zoom
+      const extremeDistance = Math.sqrt(
+        Math.pow(distanceX / viewportWidth, 2) + 
+        Math.pow(distanceY / viewportHeight, 2)
+      );
+      
+      if (extremeDistance > 0.4 && aggressive) { // If rider is way off (40% of viewport away)
+        // Adjust pitch to help see rider
+        // If too high on screen: increase pitch to look down more
+        // If too low on screen: decrease pitch to look forward more
+        if (Math.abs(distanceY) > Math.abs(distanceX)) {
+          // Determine pitch adjustment direction based on rider position
+          const pitchAdjust = distanceY > 0 ? 
+            Math.min(10, Math.abs(distanceY / viewportHeight) * 20) : // If rider too low
+            -Math.min(10, Math.abs(distanceY / viewportHeight) * 20);  // If rider too high
+          
+          // Apply pitch adjustment if significant
+          if (Math.abs(pitchAdjust) > 3) {
+            const newPitch = Math.min(85, Math.max(10, currentPitch + pitchAdjust));
+            map.easeTo({
+              pitch: newPitch,
+              duration: 600
+            });
+          }
+        }
+      }
     }
     
     // Calculate perpendicular offset for drone view
@@ -1952,22 +2176,64 @@
       cameraTargetZoom = targetZoom;
     }
     
-    // Smoothly interpolate camera position using a damping system, not time-based transitions
+    // Smoothly interpolate camera position using an advanced damping system with variable lag factors
     function updateCameraInterpolation() {
       // Skip if no target or current position
       if (!cameraTargetPos || !currentCameraPos) return;
       
-      // Camera lag factor (lower = more lag, smoother movement, but less responsive)
-      // Adjust these values to fine-tune the camera follow behavior
-      const positionLagFactor = 0.05;
-      const bearingLagFactor = 0.05;
-      const pitchLagFactor = 0.05;
-      const zoomLagFactor = 0.05;
+      // Get current map info for precise adjustments
+      const mapWidth = map.getContainer().offsetWidth;
+      const mapHeight = map.getContainer().offsetHeight;
+      const currentZoom = map.getZoom();
       
-      // Interpolate position with inertia smoothing
+      // Adaptive lag factors that change based on zoom level and camera distance from target
+      // Lower zoom = more stable camera, higher zoom = more responsive camera
+      // This creates natural, cinematic smoothing at different zoom levels
+      const zoomFactor = Math.min(1, Math.max(0.3, (currentZoom - 11) / 8)); // 0.3 at zoom 11, 1.0 at zoom 19
+      
+      // Calculate distance between current and target positions
+      const currentLatLng = new mapboxgl.LngLat(currentCameraPos.lng, currentCameraPos.lat);
+      const targetLatLng = new mapboxgl.LngLat(cameraTargetPos.lng, cameraTargetPos.lat);
+      const distanceToTarget = currentLatLng.distanceTo(targetLatLng);
+      
+      // Large sudden changes need faster lag (more immediate response)
+      // Small adjustments need slower lag (very smooth, gradual changes)
+      // This prevents both "laggy" feeling and jerky small movements
+      const distanceFactor = Math.min(1, Math.max(0.2, distanceToTarget / 2000)); // 0.2 for small changes, up to 1.0 for large
+      
+      // Create adaptive lag factors that respond to both zoom and distance
+      // Zoomed out + small changes = very smooth, stable camera
+      // Zoomed in + big changes = responsive camera that doesn't lag too much
+      const positionLagFactor = 0.04 + (0.08 * zoomFactor * distanceFactor);
+      const bearingLagFactor = 0.03 + (0.06 * zoomFactor * distanceFactor);
+      const pitchLagFactor = 0.04 + (0.06 * zoomFactor * distanceFactor);
+      const zoomLagFactor = 0.03 + (0.07 * zoomFactor);
+      
+      // Add velocity damping for even smoother transitions
+      // Store previous position for velocity calculation if we don't have it
+      if (!prevCameraPos) {
+        prevCameraPos = { ...currentCameraPos };
+      }
+      
+      // Calculate current velocity
+      const currentVelocity = {
+        lng: currentCameraPos.lng - prevCameraPos.lng,
+        lat: currentCameraPos.lat - prevCameraPos.lat
+      };
+      
+      // Store current position for next frame's velocity calculation
+      prevCameraPos = { ...currentCameraPos };
+      
+      // Apply inertia with velocity - reduces oscillation around target
+      // and creates more natural physical movement with easing
+      const velocityDamping = 0.8 - (0.4 * zoomFactor); // 0.8 at low zoom (more damping), 0.4 at high zoom
+      
+      // Interpolate position with inertia and velocity damping
       currentCameraPos = {
-        lng: currentCameraPos.lng + (cameraTargetPos.lng - currentCameraPos.lng) * positionLagFactor,
-        lat: currentCameraPos.lat + (cameraTargetPos.lat - currentCameraPos.lat) * positionLagFactor
+        lng: currentCameraPos.lng + (cameraTargetPos.lng - currentCameraPos.lng) * positionLagFactor + 
+             (currentVelocity.lng * velocityDamping),
+        lat: currentCameraPos.lat + (cameraTargetPos.lat - currentCameraPos.lat) * positionLagFactor + 
+             (currentVelocity.lat * velocityDamping)
       };
       
       // Handle bearing interpolation with special care for 0/360 boundary
@@ -1978,17 +2244,41 @@
       if (bearingDiff > Math.PI) bearingDiff -= 2 * Math.PI;
       if (bearingDiff < -Math.PI) bearingDiff += 2 * Math.PI;
       
-      // Apply smooth interpolation to bearing (in radians for smoother math)
-      currentCameraBearingRad += bearingDiff * bearingLagFactor;
+      // Store previous bearing for velocity damping
+      if (prevCameraBearingRad === undefined) {
+        prevCameraBearingRad = currentCameraBearingRad;
+      }
+      
+      // Calculate bearing velocity with damping for smooth rotation
+      const bearingVelocity = (currentCameraBearingRad - prevCameraBearingRad) * 
+                             (0.7 - (0.4 * zoomFactor)); // More damping at low zoom
+      
+      // Store current bearing for next frame
+      prevCameraBearingRad = currentCameraBearingRad;
+      
+      // Apply smooth interpolation to bearing with velocity damping
+      currentCameraBearingRad += bearingDiff * bearingLagFactor + bearingVelocity;
       
       // Convert back to degrees for mapbox
       const newBearing = (currentCameraBearingRad * 180 / Math.PI) % 360;
       
-      // Interpolate pitch with inertia smoothing
-      currentCameraPitch += (cameraTargetPitch - currentCameraPitch) * pitchLagFactor;
+      // Interpolate pitch with inertia smoothing (with similar damping)
+      if (prevCameraPitch === undefined) {
+        prevCameraPitch = currentCameraPitch;
+      }
       
-      // Interpolate zoom with inertia smoothing
-      currentCameraZoom += (cameraTargetZoom - currentCameraZoom) * zoomLagFactor;
+      const pitchVelocity = (currentCameraPitch - prevCameraPitch) * (0.7 - (0.3 * zoomFactor));
+      prevCameraPitch = currentCameraPitch;
+      currentCameraPitch += (cameraTargetPitch - currentCameraPitch) * pitchLagFactor + pitchVelocity;
+      
+      // Interpolate zoom with inertia smoothing (with similar damping)
+      if (prevCameraZoom === undefined) {
+        prevCameraZoom = currentCameraZoom;
+      }
+      
+      const zoomVelocity = (currentCameraZoom - prevCameraZoom) * (0.6 - (0.3 * zoomFactor));
+      prevCameraZoom = currentCameraZoom;
+      currentCameraZoom += (cameraTargetZoom - currentCameraZoom) * zoomLagFactor + zoomVelocity;
       
       // Apply the new camera values - using jumpTo for performance
       // This avoids Mapbox's own easing/smoothing which can cause stuttering
@@ -2001,96 +2291,185 @@
     }
     
     // Calculate ideal camera position based on rider and look-ahead
+    // with improved path-based prediction and turn handling
     function calculateIdealCameraPosition(riderCoord, bearing, speed, height, pitch, sideOffset = 0, lookAheadAdjust = 0) {
-      // Calculate look-ahead distance based on camera height and speed
-      // The higher the camera, the further ahead we look
-      // The faster we go, the further ahead we look
-      
-      // Normalize camera height to 0-1
+      // Normalize camera height to 0-1 scale
       const normalizedHeight = (height - 1) / 99;
       
+      // Get current zoom level for adaptive behavior
+      const currentZoom = map.getZoom();
+      
+      // Create dynamic factors that change based on zoom level
+      // When zoomed out, we want much more stable camera
+      // When zoomed in, we want responsive but still smooth camera
+      const zoomFactor = Math.min(1, Math.max(0.3, (currentZoom - 11) / 8)); // 0.3 at zoom 11, 1.0 at zoom 19
+      
+      // ======= PATH-AWARE LOOK-AHEAD SYSTEM =======
+      // Find current position in the route for path-based prediction
+      const currentDistanceKm = currentRouteDistance / 1000;
+      const segment = calculateSegmentForDistance(currentDistanceKm, false);
+      const currentRouteIndex = segment.beforeIdx;
+      
+      // Calculate height factor here to avoid reference before initialization
       // Base distance that scales with camera height (exponentially)
       // For low heights, we want minimal look-ahead
       // For high heights, we want significant look-ahead
-      const heightFactor = Math.pow(normalizedHeight, 0.8); // Flattens the curve a bit at lower heights
+      const heightFactor = Math.pow(normalizedHeight, 0.8); // Flatter curve at lower heights
       
-      // Set base look-ahead depending on camera height
-      // At minimum height: 10m look-ahead
-      // At maximum height: 400m look-ahead
-      const baseLookAhead = 10 + (390 * heightFactor);
+      // Look ahead multiple points on the actual route to better predict path
+      // The amount of look ahead depends on camera height (more height = further look ahead)
+      // Use a maximum of 1/5 of the remaining route ahead
+      const maxLookAheadPoints = Math.floor(Math.max(10, 20 * heightFactor)); 
+      const routeRemaining = routeCoordinates.length - currentRouteIndex - 1;
+      const pathLookAheadPoints = Math.min(maxLookAheadPoints, Math.floor(routeRemaining / 5));
       
-      // Adjust for speed (minimum impact at low heights, more at high heights)
+      // Calculate path-based look-ahead point if we have enough points ahead
+      let pathLookAheadCoord = { ...riderCoord }; // Default to rider position
+      let pathHeading = bearing; // Default to current bearing
+      
+      if (pathLookAheadPoints > 3 && currentRouteIndex < routeCoordinates.length - pathLookAheadPoints) {
+        // Determine an adaptive look-ahead index based on zoom level
+        // When zoomed out, look further ahead on the path
+        // When zoomed in, look closer ahead
+        const baseLookAheadIndex = Math.floor(3 + (pathLookAheadPoints - 3) * normalizedHeight);
+        const lookAheadIndex = Math.min(routeCoordinates.length - 1, currentRouteIndex + baseLookAheadIndex);
+        
+        // Save last look-ahead index for smooth transitions
+        lastLookAheadIndex = lookAheadIndex;
+        
+        // Calculate the path-aware look-ahead coordinate from the route
+        const lookAheadRoutePoint = routeCoordinates[lookAheadIndex];
+        pathLookAheadCoord = {
+          lng: lookAheadRoutePoint[0],
+          lat: lookAheadRoutePoint[1]
+        };
+        
+        // Calculate path direction using a wider window for more stable heading
+        // Especially important when moving slowly or on twisty routes
+        const headingEndIndex = Math.min(lookAheadIndex + 3, routeCoordinates.length - 1);
+        const headingStartIndex = Math.max(currentRouteIndex, lookAheadIndex - 3);
+        
+        if (headingEndIndex > headingStartIndex) {
+          // Calculate bearing between these points for smoother path-based heading
+          const startPoint = routeCoordinates[headingStartIndex];
+          const endPoint = routeCoordinates[headingEndIndex];
+          pathHeading = calculateBearing(startPoint, endPoint);
+        }
+      }
+      
+      // ======= ADAPTIVE LOOK-AHEAD DISTANCE CALCULATIONS =======
+      // heightFactor already calculated above
+      
+      // Calculate base look-ahead distance - larger when zoomed out
+      // Minimum distance ensures camera is never too close
+      // Maximum distance ensures natural perspective when zoomed out
+      const minLookAhead = 5; // Minimum look-ahead in meters
+      const maxLookAhead = 400; // Maximum look-ahead in meters
+      const baseLookAhead = minLookAhead + ((maxLookAhead - minLookAhead) * heightFactor);
+      
+      // Adjust for speed - higher speeds need more look-ahead
+      // But scale by height factor so it matters more when zoomed out
       const speedFactor = 1 + speed; // Range 1.1-2.0
-      const speedImpact = heightFactor; // Speed matters more at height
+      const speedImpact = 0.3 + (0.7 * heightFactor); // Less impact at close zoom
       
-      // Apply the look-ahead adjustment from visibility check (positive = more look ahead)
+      // Apply look-ahead adjustment from visibility check (positive = more look ahead)
       const lookAheadAdjustment = baseLookAhead * lookAheadAdjust;
-      // Apply adjustments for look-ahead and smooth transitions based on rider visibility
+      
+      // Calculate final look-ahead distance in meters
       const lookAheadMeters = (baseLookAhead + lookAheadAdjustment) * (1 + (speedImpact * speedFactor));
       
-      // Convert bearing to radians
+      // ======= TRADITIONAL DIRECTIONAL LOOK-AHEAD =======
+      // Calculate basic directional look-ahead as fallback/blend
       const bearingRad = (bearing * Math.PI) / 180;
-      
-      // Calculate look-ahead point on the map
       const metersPerDegree = 111319.9; // Approximate meters per degree latitude
       
-      // Calculate offsets
+      // Calculate offsets for directional look-ahead
       const latOffset = Math.cos(bearingRad) * (lookAheadMeters / metersPerDegree);
       const lngOffset = Math.sin(bearingRad) * (lookAheadMeters / (metersPerDegree * Math.cos(riderCoord.lat * Math.PI / 180)));
       
-      // Create look-ahead coordinate
-      const lookAheadCoord = {
+      // Create direction-based look-ahead coordinate
+      const directionLookAheadCoord = {
         lng: riderCoord.lng + lngOffset,
         lat: riderCoord.lat + latOffset
       };
       
-      // Calculate distance to position camera behind the rider
-      // We want to be further behind at lower camera heights (to see more of the rider)
-      // Less behind at higher heights
-      const behindDistanceDegrees = (0.0002 + (0.0002 * (1 - heightFactor))); // ranges from 0.0002 to 0.0004
+      // ======= BLEND PATH-BASED AND DIRECTION-BASED LOOK-AHEAD =======
+      // When zoomed out, prefer path-based look-ahead for stability
+      // When zoomed in, use more direction-based look-ahead for responsiveness
+      // This creates natural, stable camera behavior on any route
+      const pathWeight = 0.4 + (0.5 * (1 - zoomFactor));
+      const directionWeight = 1 - pathWeight;
       
-      // Calculate the behind position (180° from bearing)
-      const behindBearingRad = ((bearing + 180) % 360) * Math.PI / 180;
+      // Create blended look-ahead point
+      const lookAheadCoord = {
+        lng: (pathLookAheadCoord.lng * pathWeight) + (directionLookAheadCoord.lng * directionWeight),
+        lat: (pathLookAheadCoord.lat * pathWeight) + (directionLookAheadCoord.lat * directionWeight)
+      };
+      
+      // ======= ADJUST CAMERA POSITION TO KEEP BIKE CENTERED =======
+      // Calculate offset to position camera behind the rider (creating a "third person" view)
+      // Adjust based on camera height and pitch:
+      // - Closer/lower camera needs to be more behind the rider
+      // - Higher/distant camera can be more centered over the rider
+      // This creates a more natural perspective at all zoom levels
+      
+      // Calculate behind-distance (more when close, less when far)
+      const minBehindFactor = 0.0001; // Minimum behind distance in degrees
+      const maxBehindFactor = 0.0005; // Maximum behind distance in degrees
+      const behindDistanceDegrees = minBehindFactor + ((maxBehindFactor - minBehindFactor) * (1 - heightFactor));
+      
+      // Instead of fixed 180° behind position, calculate ideal "third-person" angle 
+      // based on camera pitch - lower pitch = more behind, higher pitch = more above
+      const normalizedPitch = pitch / 85; // 0-1 range
+      const thirdPersonAngleOffset = 175 + (5 * normalizedPitch); // 175-180° range
+      const behindBearingRad = ((bearing + thirdPersonAngleOffset) % 360) * Math.PI / 180;
+      
+      // Calculate behind position offset
       const behindLatOffset = Math.cos(behindBearingRad) * behindDistanceDegrees;
       const behindLngOffset = Math.sin(behindBearingRad) * (behindDistanceDegrees / Math.cos(riderCoord.lat * Math.PI / 180));
       
-      // Calculate the weighted position between rider and look-ahead
-      // The blend depends on both height and pitch
-      // Lower pitch (looking more horizontally) needs more look-ahead influence
-      // Higher pitch (looking more down) needs more rider influence
-      const normalizedPitch = pitch / 85; // 0-1 range
+      // ======= BLEND RIDER POSITION AND LOOK-AHEAD =======
+      // The blend depends on camera height, pitch, and zoom:
+      // - Higher pitch (looking more down) needs more rider influence
+      // - Lower pitch (looking more horizontal) needs more look-ahead
+      // (normalizedPitch already calculated above)
       
-      // Lower pitches need more look-ahead
-      // Higher pitches need less look-ahead
+      // Calculate pitch influence - lower pitch needs more look-ahead
       const pitchFactor = 1 - Math.pow(normalizedPitch, 0.7);
       
-      // Adjust the weighting based on both height and pitch
-      const lookAheadWeight = 0.8 * heightFactor * pitchFactor;
+      // Fine-tune look-ahead weighting based on multiple factors
+      // Lower numbers = more focused on rider (centered view)
+      // Higher numbers = more focused on look-ahead (better for seeing where you're going)
+      const lookAheadWeight = Math.min(0.7, 0.2 + (0.5 * heightFactor * pitchFactor));
       const riderWeight = 1 - lookAheadWeight;
       
-      // Blend the coordinates
+      // Create the blended coordinate
       const blendedCoord = {
         lng: (riderCoord.lng * riderWeight) + (lookAheadCoord.lng * lookAheadWeight),
         lat: (riderCoord.lat * riderWeight) + (lookAheadCoord.lat * lookAheadWeight)
       };
       
-      // Calculate side offset (perpendicular to the direction of travel)
-      // This is used to adjust the camera position left or right to keep the rider in view
+      // ======= APPLY SIDE OFFSET FOR VISIBILITY =======
+      // Calculate side offset (perpendicular to direction)
+      // Used to adjust camera position to keep rider in view
       let sideLatOffset = 0;
       let sideLngOffset = 0;
       
       if (sideOffset !== 0) {
-        // Calculate perpendicular bearing (90° to the direction of travel)
+        // Perpendicular angle (90° to travel direction)
         const sideBearingRad = ((bearing + 90) % 360) * Math.PI / 180;
-        // Scale the side offset based on camera height and distance
-        const sideOffsetDistance = sideOffset * 0.0005 * (1 + heightFactor);
+        
+        // Scale side offset based on height and zoom
+        // More responsive at higher zoom, more stable at lower zoom
+        const sideOffsetDistance = sideOffset * 0.0005 * (0.5 + (0.5 * zoomFactor));
         
         // Calculate offset in lat/lng
         sideLatOffset = Math.cos(sideBearingRad) * sideOffsetDistance;
         sideLngOffset = Math.sin(sideBearingRad) * (sideOffsetDistance / Math.cos(riderCoord.lat * Math.PI / 180));
       }
       
-      // Apply the behind offset and side offset to the blended position
+      // ======= FINAL CAMERA POSITION =======
+      // Apply all offsets to blended position
       const cameraPos = {
         lng: blendedCoord.lng + behindLngOffset + sideLngOffset,
         lat: blendedCoord.lat + behindLatOffset + sideLatOffset
