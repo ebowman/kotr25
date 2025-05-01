@@ -1187,6 +1187,8 @@
       try {
         if (map.trackLayers.length < 2) return;
         
+        const day = map.debugInfo?.id?.replace("map-", "") || "unknown";
+        
         // Get coordinates from the stored track layers
         const shortCoords = map.trackLayers.find(layer => layer.type === 'short').coordinates;
         const longCoords = map.trackLayers.find(layer => layer.type === 'long').coordinates;
@@ -1196,88 +1198,106 @@
           return;
         }
         
-        // Convert coordinates to Turf points for distance calculation
-        const shortPoints = shortCoords.map(coord => turf.point([coord[0], coord[1]]));
-        const longPoints = longCoords.map(coord => turf.point([coord[0], coord[1]]));
+        console.log(`${day}: Finding decision point between routes (${shortCoords.length} and ${longCoords.length} points)`);
         
-        // Find the divergence point
-        const threshold = 0.1; // ~100 meters in km - increased to better identify true divergence points
-        let shortIndex = 0, longIndex = 0;
-        let foundDivergence = false;
+        // Skip first 500m of both routes as they're almost certainly the same
+        const initialSkipDistance = 0.5; // 500m
+        let shortStartIdx = 0;
+        let longStartIdx = 0;
+        let distanceSoFar = 0;
         
-        // Skip the first several km of points where routes typically overlap
-        // Adjusting from 1km to 7km to catch later divergence points
-        const skipDistance = 7; // 7km - routes typically diverge after the first several km
-        let shortSkipIndex = 0;
-        let longSkipIndex = 0;
-        let shortDistanceTotal = 0;
-        let longDistanceTotal = 0;
-        
-        // Find roughly where the skip distance is on each route
-        for (let i = 1; i < shortPoints.length; i++) {
-          if (shortDistanceTotal >= skipDistance) break;
-          const dist = turf.distance(shortPoints[i-1], shortPoints[i], {units: 'kilometers'});
-          shortDistanceTotal += dist;
-          shortSkipIndex = i;
+        // Find starting point on short route (500m in)
+        for (let i = 1; i < shortCoords.length && distanceSoFar < initialSkipDistance; i++) {
+          const from = turf.point([shortCoords[i-1][0], shortCoords[i-1][1]]);
+          const to = turf.point([shortCoords[i][0], shortCoords[i][1]]);
+          distanceSoFar += turf.distance(from, to, {units: 'kilometers'});
+          shortStartIdx = i;
         }
         
-        for (let i = 1; i < longPoints.length; i++) {
-          if (longDistanceTotal >= skipDistance) break;
-          const dist = turf.distance(longPoints[i-1], longPoints[i], {units: 'kilometers'});
-          longDistanceTotal += dist;
-          longSkipIndex = i;
+        // Reset and find starting point on long route (500m in)
+        distanceSoFar = 0;
+        for (let i = 1; i < longCoords.length && distanceSoFar < initialSkipDistance; i++) {
+          const from = turf.point([longCoords[i-1][0], longCoords[i-1][1]]);
+          const to = turf.point([longCoords[i][0], longCoords[i][1]]);
+          distanceSoFar += turf.distance(from, to, {units: 'kilometers'});
+          longStartIdx = i;
         }
         
-        // Sample the routes to find the divergence point
-        const shortSampleRate = Math.max(1, Math.floor(shortPoints.length / 50));
-        const longSampleRate = Math.max(1, Math.floor(longPoints.length / 50));
+        console.log(`${day}: Starting search from short idx ${shortStartIdx}, long idx ${longStartIdx}`);
         
-        // Find points where routes diverge by sampling
-        for (let i = shortSkipIndex; i < shortPoints.length; i += shortSampleRate) {
-          let minDistance = Infinity;
-          let closestLongIndex = 0;
+        // We'll use a window approach, checking groups of points to find where routes truly diverge
+        const decisionThreshold = 0.03; // 30 meters - threshold for determining divergence
+        const windowSize = 5; // Check 5 points at a time for stability
+        
+        let shortIdx = shortStartIdx;
+        let matchedLongIdx = longStartIdx;
+        let lastGoodShortIdx = shortStartIdx;
+        let lastGoodLongIdx = longStartIdx;
+        
+        // Scan forward on both routes, tracking where they're still close to each other
+        while (shortIdx < shortCoords.length - windowSize && matchedLongIdx < longCoords.length - windowSize) {
+          // Check if current window of points is still similar between routes
+          let windowStillMatching = true;
+          let bestMatchLongIdx = matchedLongIdx;
           
-          // Find closest point on long route
-          for (let j = longSkipIndex; j < longPoints.length; j += longSampleRate) {
-            const distance = turf.distance(shortPoints[i], longPoints[j], {units: 'kilometers'});
-            if (distance < minDistance) {
-              minDistance = distance;
-              closestLongIndex = j;
+          // Try to find the best matching points within a search window
+          const searchWindow = 10; // Look at up to 10 points ahead on long route to find matches
+          const maxLongSearchIdx = Math.min(longCoords.length - 1, matchedLongIdx + searchWindow);
+          
+          // Find closest matching point on long route for current short point
+          const shortPoint = turf.point([shortCoords[shortIdx][0], shortCoords[shortIdx][1]]);
+          let minDist = Infinity;
+          
+          for (let j = matchedLongIdx; j <= maxLongSearchIdx; j++) {
+            const longPoint = turf.point([longCoords[j][0], longCoords[j][1]]);
+            const dist = turf.distance(shortPoint, longPoint, {units: 'kilometers'});
+            
+            if (dist < minDist) {
+              minDist = dist;
+              bestMatchLongIdx = j;
             }
           }
           
-          // If the minimum distance is greater than threshold, routes diverge
-          if (minDistance > threshold) {
-            shortIndex = i;
-            longIndex = closestLongIndex;
-            foundDivergence = true;
-            break;
+          // Check if the distance is greater than our threshold - routes may be diverging
+          if (minDist > decisionThreshold) {
+            // Before deciding, check the whole window to avoid false positives
+            let divergenceConfirmed = true;
+            
+            // Check ahead several points to confirm we've really diverged
+            for (let w = 1; w < windowSize; w++) {
+              if (shortIdx + w >= shortCoords.length || bestMatchLongIdx + w >= longCoords.length) {
+                break;
+              }
+              
+              const futureShortPoint = turf.point([shortCoords[shortIdx + w][0], shortCoords[shortIdx + w][1]]);
+              const futureLongPoint = turf.point([longCoords[bestMatchLongIdx + w][0], longCoords[bestMatchLongIdx + w][1]]);
+              const futureDist = turf.distance(futureShortPoint, futureLongPoint, {units: 'kilometers'});
+              
+              // If any point in the window is close, we haven't really diverged yet
+              if (futureDist <= decisionThreshold) {
+                divergenceConfirmed = false;
+                break;
+              }
+            }
+            
+            if (divergenceConfirmed) {
+              // Routes have definitely diverged - use the last good match as our decision point
+              console.log(`${day}: Routes diverge at short idx ${lastGoodShortIdx}/${shortCoords.length} and long idx ${lastGoodLongIdx}/${longCoords.length}`);
+              break;
+            }
+          } else {
+            // Routes still match at this point, update our "last good" indices
+            lastGoodShortIdx = shortIdx;
+            lastGoodLongIdx = bestMatchLongIdx;
           }
+          
+          // Move to next point
+          shortIdx++;
+          matchedLongIdx = bestMatchLongIdx;
         }
         
-        // If we couldn't find a divergence, use points a bit beyond our skip distance as fallback
-        if (!foundDivergence) {
-          console.log(`${day}: Couldn't find divergence point algorithmically. Using fallback approach.`);
-          // Start a bit beyond the skip distance
-          shortIndex = Math.floor(shortSkipIndex * 1.2);
-          longIndex = Math.floor(longSkipIndex * 1.2);
-        } else {
-          console.log(`${day}: Found divergence at short index ${shortIndex}/${shortPoints.length} and long index ${longIndex}/${longPoints.length}`);
-        }
-        
-        // Make sure indices are valid
-        shortIndex = Math.max(shortSkipIndex, Math.min(shortIndex, shortPoints.length - 1));
-        longIndex = Math.max(longSkipIndex, Math.min(longIndex, longPoints.length - 1));
-        
-        // Get the points at the divergence
-        const shortPoint = shortCoords[shortIndex];
-        const longPoint = longCoords[longIndex];
-        
-        // Calculate midpoint
-        const decisionPoint = [
-          (shortPoint[0] + longPoint[0]) / 2,
-          (shortPoint[1] + longPoint[1]) / 2
-        ];
+        // Use the last good indices as our decision point (last common point before divergence)
+        const decisionPoint = shortCoords[lastGoodShortIdx];
         
         // Create HTML for the marker
         const el = document.createElement('div');
