@@ -273,8 +273,7 @@
       </div>
       
       <div class="control-group" style="margin-top: 10px;">
-        <button id="start-btn">Start</button>
-        <button id="stop-btn" disabled>Pause</button>
+        <button id="toggle-btn">Start</button>
         <button id="reset-btn" disabled>Reset</button>
       </div>
     </div>
@@ -497,8 +496,7 @@
     
     // DOM Elements
     const routeSelect = document.getElementById('route-select');
-    const startBtn = document.getElementById('start-btn');
-    const stopBtn = document.getElementById('stop-btn');
+    const toggleBtn = document.getElementById('toggle-btn');
     const resetBtn = document.getElementById('reset-btn');
     const speedControl = document.getElementById('speed-control');
     const heightControl = document.getElementById('camera-height');
@@ -729,7 +727,7 @@
         resetAnimation();
         
         // Reset button text and position slider
-        startBtn.textContent = "Start";
+        toggleBtn.textContent = "Start";
         positionSlider.value = 0;
         
         // Pre-calculate route data for smooth animation
@@ -834,9 +832,23 @@
     // Variable to track animation state
     let animationStopped = false;
     
-    // Start or continue animation
+    // Toggle animation (start/pause/resume)
+    function toggleAnimation() {
+      // Check if animation is currently running
+      const isAnimationRunning = !!animationId;
+      
+      if (isAnimationRunning) {
+        // If running, pause the animation
+        pauseAnimation();
+      } else {
+        // If not running, start or resume the animation
+        startAnimation();
+      }
+    }
+    
+    // Start or resume animation
     function startAnimation() {
-      // Cancel any existing animation
+      // Cancel any existing animation (just to be safe)
       if (animationId) {
         cancelAnimationFrame(animationId);
         animationId = null;
@@ -855,9 +867,8 @@
       map.doubleClickZoom.disable();
       map.touchZoomRotate.disable();
       
-      // Disable controls during animation
-      startBtn.disabled = true;
-      stopBtn.disabled = false;
+      // Update button states
+      toggleBtn.textContent = "Pause";
       resetBtn.disabled = false;
       positionSlider.disabled = true;
       
@@ -868,8 +879,6 @@
         currentRouteDistance = 0;
         animationStopped = false;
       }
-      
-      // Get the current animation mode (this is now updated live by the select element)
       
       // Only reset camera position if starting a new animation, not resuming from pause
       // This ensures smooth transitions when resuming animation after using the slider
@@ -910,8 +919,8 @@
       animateRoute();
     }
     
-    // Stop animation
-    function stopAnimation() {
+    // Pause animation
+    function pauseAnimation() {
       if (animationId) {
         cancelAnimationFrame(animationId);
         animationId = null;
@@ -926,13 +935,8 @@
       // Set the flag so we know animation was stopped mid-way
       animationStopped = true;
       
-      // Update button text to "Continue" if we're not at the end
-      if (currentRouteDistance < routeDistances[routeDistances.length - 1] * 1000) {
-        startBtn.textContent = "Continue";
-      }
-      
-      startBtn.disabled = false;
-      stopBtn.disabled = true;
+      // Update UI elements
+      toggleBtn.textContent = "Resume";
       resetBtn.disabled = false;
       positionSlider.disabled = false;
     }
@@ -959,8 +963,8 @@
       animationStopped = false;
       prevBearing = undefined; // Reset bearing history
       
-      // Reset Start button text
-      startBtn.textContent = "Start";
+      // Reset toggle button text
+      toggleBtn.textContent = "Start";
       
       if (routeCoordinates.length > 0) {
         updatePointPosition(routeCoordinates[0]);
@@ -978,10 +982,18 @@
         targetCameraBearing = 0;
         lastLookAheadIndex = 0;
         
-        // Use current camera height to set initial view
-        updateInitialMapView();
+        // Use our new camera system for a smooth initial view
+        const riderCoord = {
+          lng: routeCoordinates[0][0],
+          lat: routeCoordinates[0][1]
+        };
+        
+        updateCamera(riderCoord, 0, {
+          transitionDuration: 1500
+        });
       }
       
+      // Reset UI elements
       elevationMarker.style.display = 'none';
       distanceTraveledEl.textContent = '0.0 km';
       currentElevationEl.textContent = '–';
@@ -989,8 +1001,8 @@
       progressEl.textContent = '0%';
       positionSlider.value = 0;
       
-      startBtn.disabled = false;
-      stopBtn.disabled = true;
+      // Update button states
+      toggleBtn.disabled = false;
       resetBtn.disabled = true;
       positionSlider.disabled = false;
     }
@@ -1034,30 +1046,40 @@
       });
     }
     
-    // Global variables for camera smoothing
+    // Global variables for smooth camera system
     let currentCameraPos = { lng: 0, lat: 0 };
     let currentCameraBearing = 0;
-    let targetCameraPos = { lng: 0, lat: 0 };
-    let targetCameraBearing = 0;
-    let lastLookAheadIndex = 0;
     
     // Add variable to track fractional position 
     let currentPointFloat = 0;
     
-    // Simple, direct route animation with no pre-calculation
+    // Variables for camera interpolation
+    let cameraInterpolationActive = false;
+    let cameraInterpolationStartTime = 0;
+    let cameraInterpolationDuration = 0;
+    let cameraStartPos = { lng: 0, lat: 0 };
+    let cameraTargetPos = { lng: 0, lat: 0 };
+    let cameraStartBearing = 0;
+    let cameraTargetBearing = 0;
+    let cameraStartPitch = 45;
+    let cameraTargetPitch = 45;
+    let cameraStartZoom = 13;
+    let cameraTargetZoom = 13;
+    
+    // Clean, simplified animation function that uses our new camera system
     function animateRoute() {
       // Safety check to avoid errors if route data isn't loaded
       if (!routeCoordinates || routeCoordinates.length === 0 || !routeDistances || routeDistances.length === 0) {
-        stopAnimation();
+        pauseAnimation();
         console.warn('No route coordinates available for animation');
         return;
       }
       
       // Check if we've reached the end of the route
       if (currentRouteDistance >= routeDistances[routeDistances.length - 1] * 1000) { // Convert km to m
-        stopAnimation();
+        pauseAnimation();
         // Reset button text to "Start" when animation completes
-        startBtn.textContent = "Start";
+        toggleBtn.textContent = "Start";
         animationStopped = false;
         
         // Ensure map interactions are re-enabled at the end of animation
@@ -1072,6 +1094,9 @@
         return;
       }
       
+      // Update the camera interpolation if active
+      updateCameraInterpolation();
+      
       // Speed in meters per frame - consistent regardless of point spacing
       // animationSpeed is a multiplier (0.1 to 1.0)
       // Base speed of 5 meters per frame * speed multiplier
@@ -1079,9 +1104,6 @@
       
       // Update current distance along route
       currentRouteDistance += distanceIncrement;
-      
-      // Simple direction calculation with no pre-calculation or optimization
-      // This simpler approach may eliminate glitches caused by complex logic
       
       // Convert to km for route lookup
       const currentDistanceKm = currentRouteDistance / 1000;
@@ -1114,307 +1136,117 @@
       currentPoint = riderBeforeIdx;
       currentPointFloat = riderBeforeIdx + riderFraction;
       
-      // Calculate camera look-ahead distance based on camera height, speed, and zoom level
-      const normalizedHeight = (cameraHeight - 1) / 99;
-      
-      // Adaptive look-ahead: 
-      // 1. At low heights (zoomed in), look much further ahead
-      // 2. At high speeds, look proportionally further ahead
-      // 3. When going uphill, reduce look-ahead to keep rider in view
-      
-      // First, calculate gradient for the upcoming terrain
-      // Look ahead 50m to detect if we're approaching a climb
-      const gradientCheckDistanceKm = (currentRouteDistance + 50) / 1000;
-      const gradientCheckSegment = calculateSegmentForDistance(gradientCheckDistanceKm);
-      
-      // Get elevation at current point and at check point
-      const currentEle = interpolatedPoint.length > 2 ? interpolatedPoint[2] : 0;
-      
-      // Get the elevation at the check point
-      const checkBeforePoint = routeCoordinates[gradientCheckSegment.beforeIdx];
-      const checkAfterPoint = routeCoordinates[gradientCheckSegment.afterIdx];
-      let checkElevation = 0;
-      
-      if (checkBeforePoint.length > 2 && checkAfterPoint.length > 2) {
-        checkElevation = checkBeforePoint[2] + 
-                         (checkAfterPoint[2] - checkBeforePoint[2]) * gradientCheckSegment.fraction;
-      } else if (checkBeforePoint.length > 2) {
-        checkElevation = checkBeforePoint[2];
-      }
-      
-      // Calculate the gradient (as percentage)
-      const elevationDiff = checkElevation - currentEle;
-      const horizontalDist = 50; // meters
-      const upcomingGradient = (elevationDiff / horizontalDist) * 100;
-      
-      // Adjust look-ahead based on gradient: reduce on uphills, increase on downhills
-      let gradientFactor = 1.0;
-      if (upcomingGradient > 4) {
-        // On steep uphills (>4%), reduce look-ahead by up to 40%
-        gradientFactor = Math.max(0.6, 1.0 - (upcomingGradient * 0.05));
-      } else if (upcomingGradient < -2) {
-        // On downhills, slightly increase look-ahead
-        gradientFactor = Math.min(1.2, 1.0 + (Math.abs(upcomingGradient) * 0.02));
-      }
-      
-      const inverseFactor = Math.max(0.3, 1 - normalizedHeight); // Greater effect at low heights
-      const baseAheadMeters = 30 + (70 * inverseFactor); // 30-100m base distance 
-      const speedFactor = 1 + (animationSpeed * animationSpeed * 3); // Moderate quadratic relationship with speed
-      
-      // Apply all factors to determine final look-ahead distance
-      const lookAheadMeters = baseAheadMeters * speedFactor * gradientFactor;
-      
-      // Calculate camera look-ahead position
-      const lookAheadDistanceKm = (currentRouteDistance + lookAheadMeters) / 1000;
-      
-      // CRITICAL DIFFERENCE: The smoothing level is determined by the camera height
-      // We always use the smoothed route for camera positioning, but transition between
-      // levels of smoothing based on zoom level
-      
-      // ALWAYS use the smooth path for camera when zoomed out, gradually transition
-      // to detailed path when zoomed in
-      
-      // Calculate a continuous blend factor between detailed and smoothed route
-      // 0 = fully detailed (when zoomed all the way in)
-      // 1 = fully smoothed (when zoomed all the way out)
-      // This creates a seamless transition between smoothing levels
-      const smoothingBlend = Math.min(1.0, normalizedHeight * 1.5);
-      
-      // Get both the detailed and smoothed route segments
-      const detailedSegment = calculateSegmentForDistance(lookAheadDistanceKm, false);
-      const smoothedSegment = calculateSegmentForDistance(lookAheadDistanceKm, true);
-      
-      // Get the detailed route coordinates
-      const detailedBeforePoint = routeCoordinates[detailedSegment.beforeIdx];
-      const detailedAfterPoint = routeCoordinates[detailedSegment.afterIdx];
-      
-      // Create interpolated detailed look-ahead point
-      const detailedLookAhead = [
-        detailedBeforePoint[0] + (detailedAfterPoint[0] - detailedBeforePoint[0]) * detailedSegment.fraction,
-        detailedBeforePoint[1] + (detailedAfterPoint[1] - detailedBeforePoint[1]) * detailedSegment.fraction
-      ];
-      
-      // Get the smoothed route coordinates
-      const smoothedBeforePoint = smoothedRouteCoordinates[smoothedSegment.beforeIdx];
-      const smoothedAfterPoint = smoothedRouteCoordinates[smoothedSegment.afterIdx];
-      
-      // Create interpolated smoothed look-ahead point
-      const smoothedLookAhead = [
-        smoothedBeforePoint[0] + (smoothedAfterPoint[0] - smoothedBeforePoint[0]) * smoothedSegment.fraction,
-        smoothedBeforePoint[1] + (smoothedAfterPoint[1] - smoothedBeforePoint[1]) * smoothedSegment.fraction
-      ];
-      
-      // Blend between detailed and smoothed look-ahead points based on zoom level
-      // This creates a smooth transition between detailed and smoothed path
-      const lookAheadCoord = [
-        detailedLookAhead[0] * (1 - smoothingBlend) + smoothedLookAhead[0] * smoothingBlend,
-        detailedLookAhead[1] * (1 - smoothingBlend) + smoothedLookAhead[1] * smoothingBlend
-      ];
-      
-      // Calculate the bearing
-      let bearing;
-      
-      // MAJOR SIMPLIFICATION: Always calculate bearing directly from rider to look-ahead point
-      // This ensures the camera always follows the rider and doesn't drift off in the wrong direction
-      const riderBearing = calculateBearing(interpolatedPoint, lookAheadCoord);
-      
-      // Start with the rider's direct bearing
-      bearing = riderBearing;
-      
-      // Apply minimal temporal smoothing to avoid jitter, but not so much that we get stuck
-      // The key is that we ALWAYS want to be following the rider's general direction
-      if (typeof prevBearing !== 'undefined') {
-        // Use very light temporal smoothing - just enough to reduce jitter
-        // But much less when zoomed in (where precision matters more)
-        const temporalWeight = Math.min(0.3, normalizedHeight * 0.2); // 0-0.3 range based on height
-        bearing = prevBearing * temporalWeight + bearing * (1 - temporalWeight);
-        
-        // VERY IMPORTANT: Handle the case where bearings are near the 0/360 boundary
-        // This prevents the camera from spinning around when crossing north
-        const bearingDiff = Math.abs(bearing - prevBearing);
-        if (bearingDiff > 180) {
-          // If difference is more than 180 degrees, we're crossing the 0/360 boundary
-          // Adjust the bearing to take the shorter path
-          if (bearing > prevBearing) {
-            bearing = bearing - 360;
-          } else {
-            bearing = bearing + 360;
-          }
-        }
-        
-        // Safety check: if bearings are too different (> 90 degrees),
-        // prioritize the rider's direction to prevent backwards camera movement
-        const adjustedDiff = Math.abs(bearing - riderBearing);
-        if (adjustedDiff > 90 && adjustedDiff < 270) {
-          // Bearing is too different from rider direction - reset to rider bearing
-          bearing = riderBearing;
-        }
-      }
-      
-      // Normalize bearing to 0-360 range
-      bearing = ((bearing % 360) + 360) % 360;
-      
-      // Store current bearing for next frame
-      prevBearing = bearing;
-      
-      // Set the target bearing based on our calculated bearing
-      targetCameraBearing = bearing;
-      
-      // IMPORTANT: Camera target should ALWAYS be based on rider position, not path
-      // Different approach based on zoom level (normalized height):
-      // - When zoomed in: use look-ahead point
-      // - When zoomed out: stay much closer to rider to prevent the camera from losing the rider
-      
-      // Calculate a dynamic blend factor - closer to 0 means stay near rider, closer to 1 means use lookahead
-      // The key insight is that we need to stay much closer to the rider when zoomed out
-      const riderAnchorFactor = Math.min(0.9, Math.max(0.1, normalizedHeight * 0.7)); // 0.1-0.9 range
-      
-      // Blend between rider position and lookahead (more weight to rider when zoomed out)
-      targetCameraPos = {
-        lng: interpolatedPoint[0] * (1 - riderAnchorFactor) + lookAheadCoord[0] * riderAnchorFactor,
-        lat: interpolatedPoint[1] * (1 - riderAnchorFactor) + lookAheadCoord[1] * riderAnchorFactor
+      // Get the rider's current position as a coordinate object
+      const riderCoord = {
+        lng: interpolatedPoint[0],
+        lat: interpolatedPoint[1]
       };
       
-      // Adjust smoothing factors based on height and speed
-      // Balanced camera responsiveness at higher speeds 
-      const speedResponseBoost = 1 + (animationSpeed * 1.5); // Linear boost at high speeds (reduced from quadratic)
-      const smoothingSpeedFactor = Math.max(0.4, 1 - animationSpeed * 1.2); // Moderate smoothing at high speeds (0.4 vs 0.3)
-      // Increase position responsiveness when zoomed in at high speeds, but more moderately
-      const positionSmoothingBase = 0.045 + (animationSpeed * 0.04); // Linear increase with speed (reduced from quadratic 0.06)
-      const positionSmoothingFactor = (positionSmoothingBase - (normalizedHeight * 0.03)) * speedResponseBoost;
-      const bearingSmoothingFactor = (0.035 - (normalizedHeight * 0.02)) * speedResponseBoost; // Between original and previous values
-      
-      // Apply additional damping for higher camera positions (makes movement even smoother at height)
-      // But reduce damping at high speeds to keep camera more responsive
-      const damping = (normalizedHeight * 0.5 + 0.5) * smoothingSpeedFactor;
-      
-      // Smooth position movement with EMA (Exponential Moving Average)
-      // Use a weighted blend of previous and target positions
-      
-      // Handle bearing smoothing with special care to avoid jumps across 0°/360° boundary
-      let bearingDiff = targetCameraBearing - currentCameraBearing;
-      
-      // Normalize the bearing difference to the range [-180, 180]
-      if (bearingDiff > 180) bearingDiff -= 360;
-      if (bearingDiff < -180) bearingDiff += 360;
-      
-      // Apply smoothing with damping, but make it more responsive at high zoom levels
-      // This is critical when zoomed out to keep the rider in frame
-      const zoomBasedResponsiveness = Math.min(3.0, 1.0 + normalizedHeight * 4.0); // 1.0-3.0x responsiveness based on zoom
-      const effectivePositionSmoothing = positionSmoothingFactor * damping * zoomBasedResponsiveness;
-      const effectiveBearingSmoothing = bearingSmoothingFactor * damping * zoomBasedResponsiveness;
-      
-      // Smooth camera position movement with interpolation
-      // Use minimum threshold to ensure camera always keeps up with very fast movement when zoomed out
-      const minPositionSmoothingAtMaxZoom = 0.15; // Ensures camera always moves at least 15% of the way to target per frame
-      const actualPositionSmoothing = Math.max(
-        minPositionSmoothingAtMaxZoom * normalizedHeight, 
-        effectivePositionSmoothing
-      );
-      
-      currentCameraPos.lng += (targetCameraPos.lng - currentCameraPos.lng) * actualPositionSmoothing;
-      currentCameraPos.lat += (targetCameraPos.lat - currentCameraPos.lat) * actualPositionSmoothing;
-      currentCameraBearing += bearingDiff * effectiveBearingSmoothing;
-      
-      // Normalize bearing to [0, 360) range
-      currentCameraBearing = (currentCameraBearing + 360) % 360;
-      
-      // Drone flyover mode with adjustable height
-      
-      // Convert slider value (1-100) to actual camera parameters
-      // For a closer minimum zoom (2x closer) and less far maximum (2x closer)
-      const sliderMin = 1;
-      const sliderMax = 100;
-      
-      // Adjusted height range - making closest view much closer
-      const actualMinHeight = 0.8;  // Much closer view (was 2.5m)
-      const actualMaxHeight = 250;  // Keep this the same
-      
-      // Map slider value to actual height using exponential scale for better control
-      const normalizedSliderValue = (cameraHeight - sliderMin) / (sliderMax - sliderMin);
-      const actualHeight = actualMinHeight * Math.pow(actualMaxHeight / actualMinHeight, normalizedSliderValue);
-      
-      // Zoom range (higher number = closer)
-      // Increase minimum zoom for a much closer view at minimum height
-      const minZoom = 19.0; // Increased from 16.5 for a much closer view
-      const maxZoom = 11.5; // Keep maximum zoom the same
-      
-      // Calculate zoom using the actual height
-      const zoomLevel = maxZoom + ((Math.log(actualMaxHeight) - Math.log(actualHeight)) / 
-                                 (Math.log(actualMaxHeight) - Math.log(actualMinHeight))) * (minZoom - maxZoom);
-      
-      // Use the camera angle directly from the slider instead of calculating based on height
-      // This gives users direct control over the viewing angle
-      const pitch = cameraAngle;
-      
-      // NO adjustment based on speed - keeps consistent angle at all speeds
-      // NO adjustment based on terrain gradient - keeps consistent angle on all terrain
-      // Simply use the user-selected camera angle directly
-      
-      // Position camera behind the rider
-      // This creates a true "following drone" perspective from any height
-      let cameraCenter;
-      
-      // Calculate the distance to position the camera behind rider
-      // Increase minimum distance and adjust based on speed and terrain
-      // Higher = further back, using normalized slider value for a smooth progression
-      const minBehindDistance = 0.0005; // 2.5x increase from original 0.0002
-      const maxBehindDistance = 0.0014; // Slightly increased from original 0.0012
-      
-      // For zoomed-out views, we need to position the camera relatively closer
-      // to ensure the rider remains prominently in view
-      const zoomFactor = Math.max(0.5, 1.0 - normalizedHeight * 0.5); // 0.5-1.0 range (smaller at high zoom)
-      
-      // Adjust behind distance based on speed to find the right balance
-      const speedOffset = animationSpeed * 0.0008 * zoomFactor; // Reduced effect at high zoom levels
-      
-      // Adjust camera distance for terrain - move closer on uphills to keep rider in view
-      let gradientOffset = 0;
-      if (upcomingGradient > 4) {
-        // On steeper uphills, position camera closer to rider
-        // Reduce the behind distance by up to 30% on steep climbs
-        gradientOffset = -0.0004 * Math.min(1, upcomingGradient/10);
+      // Update camera position every frame if we're not in the middle of a smooth transition
+      // This creates a butter-smooth camera that follows the rider
+      if (!cameraInterpolationActive) {
+        // Calculate the bearing between current and next point
+        const nextBearing = calculateBearing(
+          riderBeforePoint,
+          riderAfterPoint
+        );
+        
+        // Store for next frame
+        currentCameraBearing = nextBearing;
+        
+        // Initiate camera update with the current parameters
+        updateCamera(riderCoord, nextBearing, {
+          // Use a longer duration for smoother transitions
+          transitionDuration: 1200
+        });
       }
       
-      // Calculate basic distance based on zoom level
-      const zoomBasedDistance = minBehindDistance + 
-                               (normalizedSliderValue * (maxBehindDistance - minBehindDistance) * zoomFactor);
+      // Update UI
+      updateProgress();
       
-      // Apply all adjustments with minimum safeguard
-      const behindDistance = Math.max(0.0003, zoomBasedDistance + speedOffset + gradientOffset);
+      // Continue animation
+      animationId = requestAnimationFrame(animateRoute);
+    }
+    
+    // Calculate perpendicular offset for drone view
+    function calculatePerpendicularOffset(point, bearing, distance) {
+      // Convert bearing to radians and add 90 degrees to get perpendicular
+      const perpBearing = ((bearing + 90) % 360) * Math.PI / 180;
       
-      // Position behind the rider, but with a slight offset to adjust placement in viewport
-      // Start with the basic angle opposite of travel direction
-      const behindAngle = (currentCameraBearing + 180) % 360; // 180 degrees opposite of travel direction
+      // Calculate offset
+      return {
+        lng: point.lng + distance * Math.sin(perpBearing),
+        lat: point.lat + distance * Math.cos(perpBearing)
+      };
+    }
+    
+    // Update point position
+    function updatePointPosition(coord) {
+      // Safety check to prevent errors
+      if (!coord || !Array.isArray(coord) || coord.length < 2) {
+        console.warn('Invalid coordinate passed to updatePointPosition:', coord);
+        return;
+      }
       
-      // Calculate a vertical offset amount to ensure rider stays in view 
-      // When going "north" (bearing near 0/360), we need to lower the camera position slightly
-      const bearingNorthness = Math.min(currentCameraBearing, 360 - currentCameraBearing); // 0 when bearing is 0 or 360, increases as bearing moves away
-      const northAdjustment = Math.max(0, 20 - bearingNorthness) / 20; // Scale from 0-1, higher when going north
+      // Always use the detailed route for rider position
+      const riderSegment = calculateSegmentForDistance(currentDistanceKm, false);
+      const riderBeforeIdx = riderSegment.beforeIdx;
+      const riderAfterIdx = riderSegment.afterIdx;
+      const riderFraction = riderSegment.fraction;
       
-      // When traveling north, elevate the camera target slightly to keep rider at bottom of frame
-      const verticalViewportOffset = 0.0004 * northAdjustment;
+      // Get the points for rider interpolation
+      const riderBeforePoint = routeCoordinates[riderBeforeIdx];
+      const riderAfterPoint = routeCoordinates[riderAfterIdx];
       
-      // Calculate position behind the rider with additional offsets
-      const behindAngleRad = behindAngle * Math.PI / 180;
+      // Create interpolated point for the rider position
+      const interpolatedPoint = [
+        riderBeforePoint[0] + (riderAfterPoint[0] - riderBeforePoint[0]) * riderFraction,
+        riderBeforePoint[1] + (riderAfterPoint[1] - riderBeforePoint[1]) * riderFraction
+      ];
       
-      // Calculate the north-south axis (latitude) offset with adjustment
-      const latOffset = behindDistance * Math.cos(behindAngleRad);
+      // Include elevation if available
+      if (riderBeforePoint.length > 2 && riderAfterPoint.length > 2) {
+        interpolatedPoint[2] = riderBeforePoint[2] + (riderAfterPoint[2] - riderBeforePoint[2]) * riderFraction;
+      }
       
-      // The higher the "northness factor", the greater the vertical viewport adjustment
-      const adjustedLatOffset = latOffset - verticalViewportOffset;
+      // Update position
+      updatePointPosition(interpolatedPoint);
       
-      cameraCenter = {
-        lng: currentCameraPos.lng + behindDistance * Math.sin(behindAngleRad),
-        lat: currentCameraPos.lat + adjustedLatOffset
+      // Update tracking information
+      currentPoint = riderBeforeIdx;
+      currentPointFloat = riderBeforeIdx + riderFraction;
+      
+      // Get the rider's current position as a coordinate object
+      const riderCoord = {
+        lng: interpolatedPoint[0],
+        lat: interpolatedPoint[1]
       };
       
-      map.jumpTo({
-        center: [cameraCenter.lng, cameraCenter.lat], 
-        bearing: currentCameraBearing,
-        pitch: pitch,
-        zoom: zoomLevel
-      });
+      // Update camera position every frame if we're not in the middle of a smooth transition
+      // This creates a butter-smooth camera that follows the rider
+      if (!cameraInterpolationActive) {
+        // Calculate the bearing between current and next points
+        // This gives us the direction of travel
+        let bearing = currentCameraBearing; // Use current bearing as fallback
+        
+        // Calculate bearing from current and next point
+        const nextBearing = calculateBearing(
+          riderBeforePoint,
+          riderAfterPoint
+        );
+        
+        // Use the newly calculated bearing
+        bearing = nextBearing;
+        
+        // Store for next frame
+        currentCameraBearing = bearing;
+        
+        // Initiate camera update with the current parameters
+        updateCamera(riderCoord, bearing, {
+          // Use a longer duration for smoother transitions
+          transitionDuration: 1200
+        });
+      }
       
       // Update UI
       updateProgress();
@@ -1459,6 +1291,109 @@
         } catch (e) {
           console.warn('Error updating point position:', e);
         }
+      }
+    }
+    
+    // Check if the rider marker is visible within the viewport's safe area
+    // and make camera adjustments if needed, especially for downhill sections
+    function checkRiderVisibility() {
+      // Ensure map is initialized
+      if (!map || !map.getSource('point')) return;
+      
+      try {
+        // Get the current position of the rider marker
+        const pointData = map.getSource('point')._data;
+        if (!pointData || !pointData.geometry || !pointData.geometry.coordinates) return;
+        
+        // Convert the geographic coordinate to screen coordinates
+        const riderPoint = map.project([
+          pointData.geometry.coordinates[0], 
+          pointData.geometry.coordinates[1]
+        ]);
+        
+        // Get viewport dimensions
+        const viewport = map.getContainer();
+        const viewportWidth = viewport.offsetWidth;
+        const viewportHeight = viewport.offsetHeight;
+        
+        // Define a safe area rectangle where the rider should remain visible
+        // For example, the rider should be in the middle-bottom third of the screen
+        const safeArea = {
+          left: viewportWidth * 0.3,    // 30% from left edge
+          right: viewportWidth * 0.7,   // 70% from left edge (30% from right)
+          top: viewportHeight * 0.5,    // 50% from top (middle of screen)
+          bottom: viewportHeight * 0.9  // 90% from top (near bottom of screen)
+        };
+        
+        // Check if the rider is outside the safe area
+        const isRiderVisible = 
+          riderPoint.x >= safeArea.left && 
+          riderPoint.x <= safeArea.right && 
+          riderPoint.y >= safeArea.top && 
+          riderPoint.y <= safeArea.bottom;
+        
+        // If the rider is not visible in the safe area, adjust the camera
+        if (!isRiderVisible) {
+          // Get current camera settings
+          const currentCenter = map.getCenter();
+          const currentBearing = map.getBearing();
+          const currentPitch = map.getPitch();
+          const currentZoom = map.getZoom();
+          
+          // Calculate adjustments needed to bring rider back into safe area
+          let adjustX = 0;
+          let adjustY = 0;
+          
+          // Check horizontal position and calculate adjustment
+          if (riderPoint.x < safeArea.left) {
+            // Rider is too far left - move camera left
+            adjustX = (riderPoint.x - safeArea.left) / viewportWidth;
+          } else if (riderPoint.x > safeArea.right) {
+            // Rider is too far right - move camera right
+            adjustX = (riderPoint.x - safeArea.right) / viewportWidth;
+          }
+          
+          // Check vertical position and calculate adjustment
+          if (riderPoint.y < safeArea.top) {
+            // Rider is too high in viewport - move camera up
+            adjustY = (riderPoint.y - safeArea.top) / viewportHeight;
+          } else if (riderPoint.y > safeArea.bottom) {
+            // Rider is too low in viewport - move camera down
+            adjustY = (riderPoint.y - safeArea.bottom) / viewportHeight;
+          }
+          
+          // Convert screen adjustments to geographic adjustments
+          const bearingRad = currentBearing * Math.PI / 180;
+          const pitchRad = currentPitch * Math.PI / 180;
+          
+          // Calculate adjustment based on current bearing
+          // This ensures adjustments are relative to the camera direction
+          const cosB = Math.cos(bearingRad);
+          const sinB = Math.sin(bearingRad);
+          
+          // Rotate the adjustment vector based on bearing
+          const rotatedAdjustX = adjustX * cosB - adjustY * sinB;
+          const rotatedAdjustY = adjustX * sinB + adjustY * cosB;
+          
+          // Convert to reasonable longitude/latitude adjustments based on zoom level
+          // At higher zoom levels, smaller adjustments are needed
+          const zoomFactor = Math.pow(0.5, currentZoom - 10); // Base adjustment on zoom level
+          const lngAdjust = rotatedAdjustX * 0.01 * zoomFactor;
+          const latAdjust = rotatedAdjustY * 0.01 * zoomFactor;
+          
+          // Apply the adjustments to the camera position
+          map.jumpTo({
+            center: [
+              currentCenter.lng + lngAdjust,
+              currentCenter.lat + latAdjust
+            ],
+            bearing: currentBearing,
+            pitch: currentPitch,
+            zoom: currentZoom
+          });
+        }
+      } catch (e) {
+        console.warn('Error checking rider visibility:', e);
       }
     }
     
@@ -1560,6 +1495,402 @@
         } else {
           currentGradientEl.style.color = '#2c3e50'; // Flat - default
         }
+        
+        // We've removed the proactive camera adjustment from here and moved the logic
+        // to our main animation loop with better handling of downhill sections
+      }
+    }
+    
+    // Add terrain and common sources/layers function
+    function addTerrainAndSources(exaggerationValue = 1.0) {
+      try {
+        // Add terrain source if it doesn't exist
+        if (!map.getSource('mapbox-dem')) {
+          map.addSource('mapbox-dem', {
+            'type': 'raster-dem',
+            'url': 'mapbox://mapbox.mapbox-terrain-dem-v1',
+            'tileSize': 512,
+            'maxzoom': 14
+          });
+        }
+        
+        // Add sky layer if it doesn't exist
+        if (!map.getLayer('sky')) {
+          map.addLayer({
+            'id': 'sky',
+            'type': 'sky',
+            'paint': {
+              'sky-type': 'atmosphere',
+              'sky-atmosphere-sun': [0.0, 0.0],
+              'sky-atmosphere-sun-intensity': 15
+            }
+          });
+        }
+        
+        // Use fixed 1.0 terrain exaggeration - no slider adjustment
+        const exaggeration = exaggerationValue;
+        
+        // Add 3D terrain
+        map.setTerrain({ 'source': 'mapbox-dem', 'exaggeration': exaggeration });
+        
+        // Success!
+        return true;
+      } catch (e) {
+        console.warn('Error setting up terrain:', e);
+        return false;
+      }
+    }
+    
+    // Terrain exaggeration is now fixed at 1.0x - function removed
+    
+    // Simple pre-calculation function to update the cached height value
+    function preCalculateRouteData() {
+      // Simply update the stored height value
+      lastPreCalcHeight = cameraHeight;
+      // All actual calculations are done in real-time during animation
+    }
+  
+    // Helper function to get the current rider position on screen
+    function getRiderScreenPosition() {
+      // Safety check
+      if (!map || !map.getSource('point')) return null;
+      
+      try {
+        // Get the rider's current position
+        const pointSource = map.getSource('point');
+        if (!pointSource || !pointSource._data) return null;
+        
+        const pointFeature = pointSource._data;
+        if (!pointFeature || !pointFeature.geometry || !pointFeature.geometry.coordinates) return null;
+      
+        const riderCoords = pointFeature.geometry.coordinates;
+        
+        // Convert rider coordinates to screen coordinates
+        const riderScreenPoint = map.project(riderCoords);
+        return riderScreenPoint;
+      } catch (e) {
+        console.warn('Error getting rider screen position:', e);
+        return null;
+      }
+    }
+    
+    // Helper function to check if the rider is completely out of view
+    function isRiderCompletelyOutOfView(riderPoint) {
+      if (!riderPoint) return false;
+      
+      const viewport = map.getContainer();
+      const viewportWidth = viewport.offsetWidth;
+      const viewportHeight = viewport.offsetHeight;
+      
+      // Check if rider is completely off screen (more conservative check)
+      return (
+        riderPoint.x < 0 ||
+        riderPoint.x > viewportWidth ||
+        riderPoint.y < 0 ||
+        riderPoint.y > viewportHeight
+      );
+    }
+    
+    // Helper function to adjust camera to keep rider visible
+    function adjustCameraToKeepRiderVisible(riderPoint, aggressive = true) {
+      if (!riderPoint) return;
+      
+      const viewport = map.getContainer();
+      const viewportWidth = viewport.offsetWidth;
+      const viewportHeight = viewport.offsetHeight;
+      
+      // Define the safe area based on whether we need aggressive adjustment
+      const safeArea = aggressive ? {
+        left: viewportWidth * 0.3,    // 30% from left
+        right: viewportWidth * 0.7,   // 70% from left
+        top: viewportHeight * 0.4,    // 40% from top
+        bottom: viewportHeight * 0.8  // 80% from top
+      } : {
+        left: 20,                     // Just inside screen
+        right: viewportWidth - 20,    // Just inside screen
+        bottom: viewportHeight - 20,  // Just inside screen
+        top: 20                       // Just inside screen
+      };
+      
+      // Calculate adjustments
+      let adjustX = 0;
+      let adjustY = 0;
+      
+      if (riderPoint.x < safeArea.left) {
+        adjustX = (riderPoint.x - safeArea.left) / viewportWidth;
+      } else if (riderPoint.x > safeArea.right) {
+        adjustX = (riderPoint.x - safeArea.right) / viewportWidth;
+      }
+      
+      if (riderPoint.y < safeArea.top) {
+        adjustY = (riderPoint.y - safeArea.top) / viewportHeight;
+      } else if (riderPoint.y > safeArea.bottom) {
+        adjustY = (riderPoint.y - safeArea.bottom) / viewportHeight;
+      }
+      
+      // Get current camera settings
+      const currentCenter = map.getCenter();
+      const bearingRad = map.getBearing() * Math.PI / 180;
+      
+      // Rotate adjustment based on camera bearing
+      const cosB = Math.cos(bearingRad);
+      const sinB = Math.sin(bearingRad);
+      const rotX = adjustX * cosB - adjustY * sinB;
+      const rotY = adjustX * sinB + adjustY * cosB;
+      
+      // Apply adjustment
+      const zoomFactor = Math.pow(0.5, map.getZoom() - 10);
+      map.panBy([
+        rotX * viewportWidth * (aggressive ? 0.5 : 0.3),
+        rotY * viewportHeight * (aggressive ? 0.5 : 0.3)
+      ], {
+        duration: aggressive ? 500 : 1000
+      });
+    }
+    
+    // Calculate perpendicular offset for drone view
+    function calculatePerpendicularOffset(point, bearing, distance) {
+      // Convert bearing to radians and add 90 degrees to get perpendicular
+      const perpBearing = ((bearing + 90) % 360) * Math.PI / 180;
+      
+      // Calculate offset
+      return {
+        lng: point.lng + distance * Math.sin(perpBearing),
+        lat: point.lat + distance * Math.cos(perpBearing)
+      };
+    }
+    
+    // Update point position
+    function updatePointPosition(coord) {
+      // Safety check to prevent errors
+      if (!coord || !Array.isArray(coord) || coord.length < 2) {
+        console.warn('Invalid coordinate passed to updatePointPosition:', coord);
+        return;
+      }
+      
+      const point = {
+        type: 'Feature',
+        properties: {},
+        geometry: {
+          type: 'Point',
+          coordinates: [coord[0], coord[1]]
+        }
+      };
+      
+      // Check if the map and source exist before updating
+      if (map && map.getSource('point')) {
+        try {
+          map.getSource('point').setData(point);
+        } catch (e) {
+          console.warn('Error updating point position:', e);
+        }
+      }
+    }
+    
+    // Check if the rider marker is visible within the viewport's safe area
+    // and make camera adjustments if needed, especially for downhill sections
+    function checkRiderVisibility() {
+      // Ensure map is initialized
+      if (!map || !map.getSource('point')) return;
+      
+      try {
+        // Get the current position of the rider marker
+        const pointData = map.getSource('point')._data;
+        if (!pointData || !pointData.geometry || !pointData.geometry.coordinates) return;
+        
+        // Convert the geographic coordinate to screen coordinates
+        const riderPoint = map.project([
+          pointData.geometry.coordinates[0], 
+          pointData.geometry.coordinates[1]
+        ]);
+        
+        // Get viewport dimensions
+        const viewport = map.getContainer();
+        const viewportWidth = viewport.offsetWidth;
+        const viewportHeight = viewport.offsetHeight;
+        
+        // Define a safe area rectangle where the rider should remain visible
+        // For example, the rider should be in the middle-bottom third of the screen
+        const safeArea = {
+          left: viewportWidth * 0.3,    // 30% from left edge
+          right: viewportWidth * 0.7,   // 70% from left edge (30% from right)
+          top: viewportHeight * 0.5,    // 50% from top (middle of screen)
+          bottom: viewportHeight * 0.9  // 90% from top (near bottom of screen)
+        };
+        
+        // Check if the rider is outside the safe area
+        const isRiderVisible = 
+          riderPoint.x >= safeArea.left && 
+          riderPoint.x <= safeArea.right && 
+          riderPoint.y >= safeArea.top && 
+          riderPoint.y <= safeArea.bottom;
+        
+        // If the rider is not visible in the safe area, adjust the camera
+        if (!isRiderVisible) {
+          // Get current camera settings
+          const currentCenter = map.getCenter();
+          const currentBearing = map.getBearing();
+          const currentPitch = map.getPitch();
+          const currentZoom = map.getZoom();
+          
+          // Calculate adjustments needed to bring rider back into safe area
+          let adjustX = 0;
+          let adjustY = 0;
+          
+          // Check horizontal position and calculate adjustment
+          if (riderPoint.x < safeArea.left) {
+            // Rider is too far left - move camera left
+            adjustX = (riderPoint.x - safeArea.left) / viewportWidth;
+          } else if (riderPoint.x > safeArea.right) {
+            // Rider is too far right - move camera right
+            adjustX = (riderPoint.x - safeArea.right) / viewportWidth;
+          }
+          
+          // Check vertical position and calculate adjustment
+          if (riderPoint.y < safeArea.top) {
+            // Rider is too high in viewport - move camera up
+            adjustY = (riderPoint.y - safeArea.top) / viewportHeight;
+          } else if (riderPoint.y > safeArea.bottom) {
+            // Rider is too low in viewport - move camera down
+            adjustY = (riderPoint.y - safeArea.bottom) / viewportHeight;
+          }
+          
+          // Convert screen adjustments to geographic adjustments
+          const bearingRad = currentBearing * Math.PI / 180;
+          const pitchRad = currentPitch * Math.PI / 180;
+          
+          // Calculate adjustment based on current bearing
+          // This ensures adjustments are relative to the camera direction
+          const cosB = Math.cos(bearingRad);
+          const sinB = Math.sin(bearingRad);
+          
+          // Rotate the adjustment vector based on bearing
+          const rotatedAdjustX = adjustX * cosB - adjustY * sinB;
+          const rotatedAdjustY = adjustX * sinB + adjustY * cosB;
+          
+          // Convert to reasonable longitude/latitude adjustments based on zoom level
+          // At higher zoom levels, smaller adjustments are needed
+          const zoomFactor = Math.pow(0.5, currentZoom - 10); // Base adjustment on zoom level
+          const lngAdjust = rotatedAdjustX * 0.01 * zoomFactor;
+          const latAdjust = rotatedAdjustY * 0.01 * zoomFactor;
+          
+          // Apply the adjustments to the camera position
+          map.jumpTo({
+            center: [
+              currentCenter.lng + lngAdjust,
+              currentCenter.lat + latAdjust
+            ],
+            bearing: currentBearing,
+            pitch: currentPitch,
+            zoom: currentZoom
+          });
+        }
+      } catch (e) {
+        console.warn('Error checking rider visibility:', e);
+      }
+    }
+    
+    // Calculate bearing between two coordinates
+    function calculateBearing(start, end) {
+      // Safety check for invalid coordinates
+      if (!start || !end || !Array.isArray(start) || !Array.isArray(end) || 
+          start.length < 2 || end.length < 2) {
+        console.warn('Invalid coordinates for bearing calculation:', start, end);
+        return 0; // Default bearing
+      }
+      
+      try {
+        const startLat = start[1] * Math.PI / 180;
+        const startLng = start[0] * Math.PI / 180;
+        const endLat = end[1] * Math.PI / 180;
+        const endLng = end[0] * Math.PI / 180;
+        
+        const y = Math.sin(endLng - startLng) * Math.cos(endLat);
+        const x = Math.cos(startLat) * Math.sin(endLat) - 
+                  Math.sin(startLat) * Math.cos(endLat) * Math.cos(endLng - startLng);
+        
+        const bearing = Math.atan2(y, x) * 180 / Math.PI;
+        return (bearing + 360) % 360;
+      } catch (e) {
+        console.warn('Error calculating bearing:', e);
+        return 0; // Default bearing on error
+      }
+    }
+    
+    // Update progress and UI
+    function updateProgress() {
+      if (routeCoordinates.length === 0 || routeDistances.length === 0) return;
+      
+      // Calculate progress percentage based on distance
+      const totalDistanceMeters = routeDistances[routeDistances.length - 1] * 1000; // km to m
+      const progress = currentRouteDistance / totalDistanceMeters;
+      
+      // Update progress element
+      progressEl.textContent = `${Math.round(progress * 100)}%`;
+      
+      // Update distance traveled
+      distanceTraveledEl.textContent = `${(currentRouteDistance / 1000).toFixed(1)} km`;
+      
+      // Update position slider without triggering its change event
+      positionSlider.value = progress * 100;
+      
+      // Update elevation marker
+      updateElevationMarker(progress);
+      
+      // Get current and next points for interpolation
+      const currentIdx = Math.floor(currentPointFloat);
+      const nextIdx = Math.min(currentIdx + 1, routeCoordinates.length - 1);
+      const pointFraction = currentPointFloat - currentIdx;
+      
+      // Get interpolated elevation
+      let currentElevation;
+      if (routeCoordinates[currentIdx].length > 2 && routeCoordinates[nextIdx].length > 2) {
+        currentElevation = routeCoordinates[currentIdx][2] + 
+                          (routeCoordinates[nextIdx][2] - routeCoordinates[currentIdx][2]) * pointFraction;
+      } else {
+        currentElevation = routeCoordinates[currentIdx][2] || 0;
+      }
+      
+      currentElevationEl.textContent = `${Math.round(currentElevation)} m`;
+      
+      // Calculate gradient using about 100m look-behind distance
+      // Find a point ~100m back from our current position
+      let lookBehindDistance = Math.max(0, currentRouteDistance - 100); // meters
+      let lookBehindDistanceKm = lookBehindDistance / 1000;
+      let prevPointIdx = 0;
+      
+      // Find the closest point for our look-behind distance
+      for (let i = 0; i < routeDistances.length; i++) {
+        if (routeDistances[i] >= lookBehindDistanceKm) {
+          prevPointIdx = Math.max(0, i - 1);
+          break;
+        }
+      }
+      
+      // Calculate the elevation change over this distance
+      const prevElevation = routeCoordinates[prevPointIdx][2] || 0;
+      const elevationChange = currentElevation - prevElevation;
+      
+      // Calculate the actual distance between these points
+      const actualDistance = (currentRouteDistance - (routeDistances[prevPointIdx] * 1000)); // in meters
+      
+      if (actualDistance > 10) { // Only calculate gradient if we have sufficient distance
+        const gradient = (elevationChange / actualDistance) * 100;
+        currentGradientEl.textContent = `${gradient.toFixed(1)}%`;
+        
+        // Change gradient text color based on steepness
+        if (gradient > 8) {
+          currentGradientEl.style.color = '#e74c3c'; // Steep - red
+        } else if (gradient > 4) {
+          currentGradientEl.style.color = '#f39c12'; // Moderate - orange
+        } else if (gradient < -4) {
+          currentGradientEl.style.color = '#2ecc71'; // Descent - green
+        } else {
+          currentGradientEl.style.color = '#2c3e50'; // Flat - default
+        }
+        
+        // We've removed the proactive camera adjustment from here and moved the logic
+        // to our main animation loop with better handling of downhill sections
       }
     }
     
@@ -1670,6 +2001,242 @@
       // All actual calculations are done in real-time during animation
     }
   
+    // Helper function to get the current rider position on screen
+    function getRiderScreenPosition() {
+      // Safety check
+      if (!map || !map.getSource('point')) return null;
+      
+      try {
+        // Get the rider's current position
+        const pointSource = map.getSource('point');
+        if (!pointSource || !pointSource._data) return null;
+        
+        const pointFeature = pointSource._data;
+        if (!pointFeature || !pointFeature.geometry || !pointFeature.geometry.coordinates) return null;
+      
+        const riderCoords = pointFeature.geometry.coordinates;
+        
+        // Convert rider coordinates to screen coordinates
+        const riderScreenPoint = map.project(riderCoords);
+        
+        // Get the map container dimensions
+        const mapBounds = map.getContainer().getBoundingClientRect();
+        const mapWidth = mapBounds.width;
+        const mapHeight = mapBounds.height;
+        
+        return {
+          x: riderScreenPoint.x,
+          y: riderScreenPoint.y,
+          mapWidth: mapWidth,
+          mapHeight: mapHeight,
+          coords: riderCoords
+        };
+      } catch (error) {
+        console.warn('Error getting rider screen position:', error);
+        return null;
+      }
+    }
+    
+    // ===== New camera system functions =====
+    
+    // Set up a camera transition with custom interpolation
+    function setupCameraTransition(targetPos, targetBearing, targetPitch, targetZoom, duration = 2000) {
+      // Get current camera values
+      cameraStartPos = map.getCenter();
+      cameraStartBearing = map.getBearing();
+      cameraStartPitch = map.getPitch();
+      cameraStartZoom = map.getZoom();
+      
+      // Store target values
+      cameraTargetPos = targetPos;
+      cameraTargetBearing = targetBearing;
+      cameraTargetPitch = targetPitch;
+      cameraTargetZoom = targetZoom;
+      
+      // Start the interpolation
+      cameraInterpolationActive = true;
+      cameraInterpolationStartTime = performance.now();
+      cameraInterpolationDuration = duration;
+    }
+    
+    // Update interpolated camera position
+    function updateCameraInterpolation() {
+      if (!cameraInterpolationActive) return;
+      
+      const now = performance.now();
+      const elapsed = now - cameraInterpolationStartTime;
+      
+      // Calculate progress (0 to 1)
+      let progress = Math.min(1, elapsed / cameraInterpolationDuration);
+      
+      // Apply easing function (smooth ease out)
+      const easedProgress = progress < 0.5 
+        ? 4 * progress * progress * progress 
+        : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+      
+      // Interpolate values
+      const newPos = {
+        lng: cameraStartPos.lng + (cameraTargetPos.lng - cameraStartPos.lng) * easedProgress,
+        lat: cameraStartPos.lat + (cameraTargetPos.lat - cameraStartPos.lat) * easedProgress
+      };
+      
+      // Handle bearing interpolation with special care for 0/360 boundary
+      let bearingDiff = cameraTargetBearing - cameraStartBearing;
+      if (bearingDiff > 180) bearingDiff -= 360;
+      if (bearingDiff < -180) bearingDiff += 360;
+      const newBearing = cameraStartBearing + bearingDiff * easedProgress;
+      
+      // Interpolate pitch and zoom
+      const newPitch = cameraStartPitch + (cameraTargetPitch - cameraStartPitch) * easedProgress;
+      const newZoom = cameraStartZoom + (cameraTargetZoom - cameraStartZoom) * easedProgress;
+      
+      // Apply the new camera values
+      map.jumpTo({
+        center: newPos,
+        bearing: newBearing,
+        pitch: newPitch,
+        zoom: newZoom
+      });
+      
+      // Check if interpolation is complete
+      if (progress >= 1) {
+        cameraInterpolationActive = false;
+      }
+    }
+    
+    // Calculate ideal camera position based on rider and look-ahead
+    function calculateIdealCameraPosition(riderCoord, bearing, speed, height, pitch) {
+      // Calculate look-ahead distance based on camera height and speed
+      // The higher the camera, the further ahead we look
+      // The faster we go, the further ahead we look
+      
+      // Normalize camera height to 0-1
+      const normalizedHeight = (height - 1) / 99;
+      
+      // Base distance that scales with camera height (exponentially)
+      // For low heights, we want minimal look-ahead
+      // For high heights, we want significant look-ahead
+      const heightFactor = Math.pow(normalizedHeight, 0.8); // Flattens the curve a bit at lower heights
+      
+      // Set base look-ahead depending on camera height
+      // At minimum height: 10m look-ahead
+      // At maximum height: 400m look-ahead
+      const baseLookAhead = 10 + (390 * heightFactor);
+      
+      // Adjust for speed (minimum impact at low heights, more at high heights)
+      const speedFactor = 1 + speed; // Range 1.1-2.0
+      const speedImpact = heightFactor; // Speed matters more at height
+      const lookAheadMeters = baseLookAhead * (1 + (speedImpact * speedFactor));
+      
+      // Convert bearing to radians
+      const bearingRad = (bearing * Math.PI) / 180;
+      
+      // Calculate look-ahead point on the map
+      const metersPerDegree = 111319.9; // Approximate meters per degree latitude
+      
+      // Calculate offsets
+      const latOffset = Math.cos(bearingRad) * (lookAheadMeters / metersPerDegree);
+      const lngOffset = Math.sin(bearingRad) * (lookAheadMeters / (metersPerDegree * Math.cos(riderCoord.lat * Math.PI / 180)));
+      
+      // Create look-ahead coordinate
+      const lookAheadCoord = {
+        lng: riderCoord.lng + lngOffset,
+        lat: riderCoord.lat + latOffset
+      };
+      
+      // Calculate distance to position camera behind the rider
+      // We want to be further behind at lower camera heights (to see more of the rider)
+      // Less behind at higher heights
+      const behindDistanceDegrees = (0.0002 + (0.0002 * (1 - heightFactor))); // ranges from 0.0002 to 0.0004
+      
+      // Calculate the behind position (180° from bearing)
+      const behindBearingRad = ((bearing + 180) % 360) * Math.PI / 180;
+      const behindLatOffset = Math.cos(behindBearingRad) * behindDistanceDegrees;
+      const behindLngOffset = Math.sin(behindBearingRad) * (behindDistanceDegrees / Math.cos(riderCoord.lat * Math.PI / 180));
+      
+      // Calculate the weighted position between rider and look-ahead
+      // The blend depends on both height and pitch
+      // Lower pitch (looking more horizontally) needs more look-ahead influence
+      // Higher pitch (looking more down) needs more rider influence
+      const normalizedPitch = pitch / 85; // 0-1 range
+      
+      // Lower pitches need more look-ahead
+      // Higher pitches need less look-ahead
+      const pitchFactor = 1 - Math.pow(normalizedPitch, 0.7);
+      
+      // Adjust the weighting based on both height and pitch
+      const lookAheadWeight = 0.8 * heightFactor * pitchFactor;
+      const riderWeight = 1 - lookAheadWeight;
+      
+      // Blend the coordinates
+      const blendedCoord = {
+        lng: (riderCoord.lng * riderWeight) + (lookAheadCoord.lng * lookAheadWeight),
+        lat: (riderCoord.lat * riderWeight) + (lookAheadCoord.lat * lookAheadWeight)
+      };
+      
+      // Apply the behind offset to the blended position
+      const cameraPos = {
+        lng: blendedCoord.lng + behindLngOffset,
+        lat: blendedCoord.lat + behindLatOffset
+      };
+      
+      return cameraPos;
+    }
+    
+    // Update camera smoothly based on rider position
+    function updateCamera(riderCoord, bearing, options = {}) {
+      // Merge options with defaults
+      const settings = {
+        speed: animationSpeed,
+        height: cameraHeight,
+        pitch: cameraAngle,
+        transitionDuration: 800, // ms
+        ...options
+      };
+      
+      // Calculate ideal camera position
+      const idealCameraPos = calculateIdealCameraPosition(
+        riderCoord, 
+        bearing, 
+        settings.speed, 
+        settings.height, 
+        settings.pitch
+      );
+      
+      // Initiate a smooth transition to the calculated position
+      setupCameraTransition(
+        idealCameraPos,
+        bearing,
+        settings.pitch,
+        // Calculate zoom from height
+        calculateZoomFromHeight(settings.height),
+        settings.transitionDuration
+      );
+    }
+    
+    // Calculate the zoom level from camera height
+    function calculateZoomFromHeight(height) {
+      // Convert slider value (1-100) to actual parameters
+      const sliderMin = 1;
+      const sliderMax = 100;
+      
+      // Adjusted height range
+      const actualMinHeight = 0.8;
+      const actualMaxHeight = 250;
+      
+      // Normalize and calculate actual height (exponential scale)
+      const normalizedSliderValue = (height - sliderMin) / (sliderMax - sliderMin);
+      const actualHeight = actualMinHeight * Math.pow(actualMaxHeight / actualMinHeight, normalizedSliderValue);
+      
+      // Zoom range 
+      const minZoom = 19.0; // Closer view
+      const maxZoom = 11.5; // Farther view
+      
+      // Calculate zoom level (logarithmic scale)
+      return maxZoom + ((Math.log(actualMaxHeight) - Math.log(actualHeight)) / 
+                        (Math.log(actualMaxHeight) - Math.log(actualMinHeight))) * (minZoom - maxZoom);
+    }
+    
     // Function to parse URL parameters and hash fragments
     function parseUrlParams() {
       // Check for route parameter in the URL query string
@@ -1718,8 +2285,7 @@
         window.location.hash = `route=${routeSelect.value}`;
       });
       
-      startBtn.addEventListener('click', startAnimation);
-      stopBtn.addEventListener('click', stopAnimation);
+      toggleBtn.addEventListener('click', toggleAnimation);
       resetBtn.addEventListener('click', resetAnimation);
       
       // Map style is fixed to Satellite with Streets
@@ -1728,39 +2294,81 @@
       
       // Camera height handler - updates view immediately
       heightControl.addEventListener('input', () => {
-        cameraHeight = parseInt(heightControl.value);
-        
-        // If animation is not running, update the view immediately
-        if (!animationId && routeCoordinates.length > 0) {
-          updateInitialMapView();
-        }
-        
-        // Only recalculate if the height has changed significantly
-        if (Math.abs(cameraHeight - lastPreCalcHeight) > 10) {
-          // Wait a short delay if the user is actively adjusting the slider
-          setTimeout(() => {
-            // Only recalculate if the height hasn't changed again during the delay
-            if (Math.abs(cameraHeight - lastPreCalcHeight) > 10) {
-              preCalculateRouteData();
-            }
-          }, 500);
+        try {
+          cameraHeight = parseInt(heightControl.value);
+          
+          // If animation is not running, update the view immediately
+          if (!animationId && routeCoordinates.length > 0) {
+            updateInitialMapView();
+            
+            // After view update, check if rider is visible
+            // Using a longer delay for smoother behavior
+            setTimeout(() => {
+              try {
+                // Only check if the rider is completely out of view (less aggressive)
+                const riderPosition = getRiderScreenPosition();
+                if (riderPosition && isRiderCompletelyOutOfView(riderPosition)) {
+                  // Use a very gentle, slow adjustment only when absolutely necessary
+                  adjustCameraToKeepRiderVisible(riderPosition, false);
+                }
+              } catch (e) {
+                console.warn('Error checking rider visibility after height change:', e);
+              }
+            }, 1200);
+          }
+          
+          // Only recalculate if the height has changed significantly
+          if (Math.abs(cameraHeight - lastPreCalcHeight) > 10) {
+            // Wait a short delay if the user is actively adjusting the slider
+            setTimeout(() => {
+              try {
+                // Only recalculate if the height hasn't changed again during the delay
+                if (Math.abs(cameraHeight - lastPreCalcHeight) > 10) {
+                  preCalculateRouteData();
+                }
+              } catch (e) {
+                console.warn('Error in preCalculateRouteData:', e);
+              }
+            }, 500);
+          }
+        } catch (error) {
+          console.error('Error in camera height handler:', error);
         }
       });
       
       // Camera angle handler - updates view immediately
       angleControl.addEventListener('input', () => {
-        // Invert the values - slider shows low to high (10-85), but we need to reverse this
-        // so that when slider is at "Low" position, we get a horizontal view (low angle value)
-        // and when slider is at "High" position, we get an overhead view (high angle value)
-        const sliderValue = parseInt(angleControl.value);
-        
-        // Calculate inverted angle - when slider is at min (10), we want max angle (85)
-        // and vice versa
-        cameraAngle = 95 - sliderValue; // 95 - 10 = 85, 95 - 85 = 10
-        
-        // If animation is not running, update the view immediately
-        if (!animationId && routeCoordinates.length > 0) {
-          updateInitialMapView();
+        try {
+          // Invert the values - slider shows low to high (10-85), but we need to reverse this
+          // so that when slider is at "Low" position, we get a horizontal view (low angle value)
+          // and when slider is at "High" position, we get an overhead view (high angle value)
+          const sliderValue = parseInt(angleControl.value);
+          
+          // Calculate inverted angle - when slider is at min (10), we want max angle (85)
+          // and vice versa
+          cameraAngle = 95 - sliderValue; // 95 - 10 = 85, 95 - 85 = 10
+          
+          // If animation is not running, update the view immediately
+          if (!animationId && routeCoordinates.length > 0) {
+            updateInitialMapView();
+            
+            // After view update, check if rider is completely out of view
+            // Using a longer delay for smoother behavior and being less aggressive
+            setTimeout(() => {
+              try {
+                // Only check if the rider is completely out of view (less aggressive)
+                const riderPosition = getRiderScreenPosition();
+                if (riderPosition && isRiderCompletelyOutOfView(riderPosition)) {
+                  // Use a very gentle, slow adjustment only when absolutely necessary
+                  adjustCameraToKeepRiderVisible(riderPosition, false);
+                }
+              } catch (e) {
+                console.warn('Error checking rider visibility after angle change:', e);
+              }
+            }, 1200);
+          }
+        } catch (error) {
+          console.error('Error in camera angle handler:', error);
         }
       });
       
@@ -1772,8 +2380,26 @@
       positionSlider.addEventListener('input', () => {
         // Only allow manual positioning when animation is not running
         if (!animationId) {
-          const positionPercent = parseFloat(positionSlider.value) / 100;
-          updatePositionManually(positionPercent);
+          try {
+            const positionPercent = parseFloat(positionSlider.value) / 100;
+            updatePositionManually(positionPercent);
+            
+            // Wait for position update to complete, then check visibility
+            // Using a longer delay for a smoother experience
+            setTimeout(() => {
+              try {
+                const riderPosition = getRiderScreenPosition();
+                if (riderPosition && !isRiderVisible(riderPosition)) {
+                  // If rider isn't visible, make a smooth adjustment
+                  adjustCameraToKeepRiderVisible(riderPosition);
+                }
+              } catch (e) {
+                console.warn('Error in rider visibility check after position update:', e);
+              }
+            }, 1000);
+          } catch (error) {
+            console.error('Error updating position manually:', error);
+          }
         }
       });
     });
@@ -1792,28 +2418,15 @@
       // Convert current distance to km for comparison with routeDistances
       const currentDistanceKm = currentRouteDistance / 1000;
       
-      // Find the two points that our current distance falls between
-      let beforeIdx = 0;
-      let afterIdx = 1;
-      let fraction = 0;
-      
-      // Calculate normalized height value (0-1 range) for adaptive behaviors
-      const normalizedHeight = (cameraHeight - 1) / 99;
-      
-      // Determine if we should use smoothed route (when zoomed out)
-      const useSmoothedForCamera = normalizedHeight > 0.5; // When camera is more than halfway up
-      
-      // Get segment using the appropriate route
-      const segment = calculateSegmentForDistance(currentDistanceKm, false); // Always use detailed route for rider position
-      beforeIdx = segment.beforeIdx;
-      afterIdx = segment.afterIdx;
-      fraction = segment.fraction;
+      // Get segment using the route
+      const segment = calculateSegmentForDistance(currentDistanceKm, false);
+      const beforeIdx = segment.beforeIdx;
+      const afterIdx = segment.afterIdx;
+      const fraction = segment.fraction;
       
       // Get the two points
       const beforePoint = routeCoordinates[beforeIdx];
       const afterPoint = routeCoordinates[afterIdx];
-      
-      // We'll use the fraction from the segment we got above, no need to recalculate
       
       // Create interpolated point
       const interpolatedPoint = [
@@ -1833,192 +2446,22 @@
       currentPoint = beforeIdx;
       currentPointFloat = beforeIdx + fraction;
       
-      // Calculate camera position using the same logic as during animation
+      // Calculate bearing
+      const bearing = calculateBearing(
+        beforePoint,
+        afterPoint
+      );
       
-      // For camera positioning, we'll use distance-based look-ahead like during animation
-      // We already calculated normalizedHeight above
-      
-      // We already determined if we should use smoothed route above
-      
-      // Calculate adaptive look-ahead distance
-      const inverseFactor = Math.max(0.3, 1 - normalizedHeight);
-      const baseAheadMeters = 15 + normalizedHeight * 85;
-      const speedFactor = 1 + (animationSpeed * animationSpeed * 2);
-      const lookAheadMeters = baseAheadMeters * speedFactor;
-      
-      // Calculate target position for camera based on current position + look-ahead distance
-      const lookAheadDistanceKm = (currentRouteDistance + lookAheadMeters) / 1000;
-      
-      // Just like in the animation function, use a blend of detailed and smoothed paths
-      // for camera positioning that depends on the zoom level
-      const smoothingBlend = Math.min(1.0, normalizedHeight * 1.5);
-      
-      // Get both the detailed and smoothed route segments
-      const detailedSegment = calculateSegmentForDistance(lookAheadDistanceKm, false);
-      const smoothedSegment = calculateSegmentForDistance(lookAheadDistanceKm, true);
-      
-      // Get the detailed route coordinates
-      const detailedBeforePoint = routeCoordinates[detailedSegment.beforeIdx];
-      const detailedAfterPoint = routeCoordinates[detailedSegment.afterIdx];
-      
-      // Create interpolated detailed look-ahead point
-      const detailedLookAhead = [
-        detailedBeforePoint[0] + (detailedAfterPoint[0] - detailedBeforePoint[0]) * detailedSegment.fraction,
-        detailedBeforePoint[1] + (detailedAfterPoint[1] - detailedBeforePoint[1]) * detailedSegment.fraction
-      ];
-      
-      // Get the smoothed route coordinates
-      const smoothedBeforePoint = smoothedRouteCoordinates[smoothedSegment.beforeIdx];
-      const smoothedAfterPoint = smoothedRouteCoordinates[smoothedSegment.afterIdx];
-      
-      // Create interpolated smoothed look-ahead point
-      const smoothedLookAhead = [
-        smoothedBeforePoint[0] + (smoothedAfterPoint[0] - smoothedBeforePoint[0]) * smoothedSegment.fraction,
-        smoothedBeforePoint[1] + (smoothedAfterPoint[1] - smoothedBeforePoint[1]) * smoothedSegment.fraction
-      ];
-      
-      // Blend between detailed and smoothed paths based on zoom level
-      const lookAheadCoord = [
-        detailedLookAhead[0] * (1 - smoothingBlend) + smoothedLookAhead[0] * smoothingBlend,
-        detailedLookAhead[1] * (1 - smoothingBlend) + smoothedLookAhead[1] * smoothingBlend
-      ];
-      
-      // SIMPLIFIED: Always calculate bearing directly from rider to look-ahead point
-      // This matches the animation logic and prevents camera from drifting in wrong direction
-      const riderBearing = calculateBearing(interpolatedPoint, lookAheadCoord);
-      
-      // Start with the rider's direct bearing
-      bearing = riderBearing;
-      
-      // Apply minimal temporal smoothing, consistent with the animation function
-      if (typeof prevBearing !== 'undefined') {
-        // Use light temporal smoothing - just enough to reduce jitter
-        const temporalWeight = Math.min(0.3, normalizedHeight * 0.2); // 0-0.3 range based on height
-        bearing = prevBearing * temporalWeight + bearing * (1 - temporalWeight);
-        
-        // Handle the case where bearings are near the 0/360 boundary
-        const bearingDiff = Math.abs(bearing - prevBearing);
-        if (bearingDiff > 180) {
-          // Adjust bearing to take the shorter path across the boundary
-          if (bearing > prevBearing) {
-            bearing = bearing - 360;
-          } else {
-            bearing = bearing + 360;
-          }
-        }
-        
-        // Safety check: if bearings are too different (> 90 degrees),
-        // prioritize the rider's direction
-        const adjustedDiff = Math.abs(bearing - riderBearing);
-        if (adjustedDiff > 90 && adjustedDiff < 270) {
-          bearing = riderBearing;
-        }
-      }
-      
-      // Normalize bearing to 0-360 range
-      bearing = ((bearing % 360) + 360) % 360;
-      
-      // Store for next use
-      prevBearing = bearing;
-      
-      // Use the same approach as animation function: blend between rider and lookahead 
-      // Stay closer to rider when zoomed out to prevent camera from losing rider
-      const riderAnchorFactor = Math.min(0.9, Math.max(0.1, normalizedHeight * 0.7)); // 0.1-0.9 range
-      
-      // Blend between rider position and lookahead (more weight to rider when zoomed out)
-      currentCameraPos = { 
-        lng: interpolatedPoint[0] * (1 - riderAnchorFactor) + lookAheadCoord[0] * riderAnchorFactor,
-        lat: interpolatedPoint[1] * (1 - riderAnchorFactor) + lookAheadCoord[1] * riderAnchorFactor
-      };
-      // Target should match current position for consistent animation resumption
-      targetCameraPos = { 
-        lng: currentCameraPos.lng, 
-        lat: currentCameraPos.lat
-      };
-      currentCameraBearing = bearing;
-      targetCameraBearing = bearing;
-      lastLookAheadIndex = lookBeforeIdx;
-      
-      // Calculate camera parameters to match animation
-      // Drone flyover mode with adjustable height
-      const sliderMin = 1;
-      const sliderMax = 100;
-      
-      // Use same height calculation as animation
-      const actualMinHeight = 2.5;
-      const actualMaxHeight = 250;
-      const normalizedSliderValue = (cameraHeight - sliderMin) / (sliderMax - sliderMin);
-      const actualHeight = actualMinHeight * Math.pow(actualMaxHeight / actualMinHeight, normalizedSliderValue);
-      
-      // Calculate zoom using the actual height
-      const minZoom = 17.5;
-      const maxZoom = 11.5;
-      const zoomLevel = maxZoom + ((Math.log(actualMaxHeight) - Math.log(actualHeight)) / 
-                               (Math.log(actualMaxHeight) - Math.log(actualMinHeight))) * (minZoom - maxZoom);
-      
-      // Use camera angle directly from the slider instead of calculating based on height
-      // This is consistent with the animation function approach
-      const pitch = cameraAngle;
-      
-      // NO adjustment based on speed - keeps consistent angle at all speeds
-      // NO adjustment based on terrain gradient - keeps consistent angle on all terrain
-      
-      // Position camera behind the rider - same as in animation
-      // Use same formula as in animation for consistency
-      const minBehindDistance = 0.0005;
-      const maxBehindDistance = 0.0014;
-      
-      // For zoomed-out views, we need to position the camera relatively closer
-      // to ensure the rider remains prominently in view
-      const zoomFactor = Math.max(0.5, 1.0 - normalizedHeight * 0.5); // 0.5-1.0 range (smaller at high zoom)
-      
-      // Calculate basic distance based on zoom level
-      const zoomBasedDistance = minBehindDistance + 
-                              (normalizedSliderValue * (maxBehindDistance - minBehindDistance) * zoomFactor);
-      
-      // Apply speed offset with zoom adjustment                    
-      const speedOffset = animationSpeed * 0.0008 * zoomFactor;
-      
-      // Final behind distance with minimum safeguard
-      const behindDistance = Math.max(0.0003, zoomBasedDistance + speedOffset);
-      const behindAngle = (bearing + 180) % 360; // 180 degrees opposite of travel direction
-      
-      // Calculate a vertical offset amount to ensure rider stays in view 
-      // When going "north" (bearing near 0/360), we need to lower the camera position slightly
-      const bearingNorthness = Math.min(bearing, 360 - bearing); // 0 when bearing is 0 or 360, increases as bearing moves away
-      const northAdjustment = Math.max(0, 20 - bearingNorthness) / 20; // Scale from 0-1, higher when going north
-      
-      // When traveling north, elevate the camera target slightly to keep rider at bottom of frame
-      const verticalViewportOffset = 0.0004 * northAdjustment;
-      
-      const behindAngleRad = behindAngle * Math.PI / 180;
-      
-      // Calculate the north-south axis (latitude) offset with adjustment
-      const latOffset = behindDistance * Math.cos(behindAngleRad);
-      
-      // The higher the "northness factor", the greater the vertical viewport adjustment
-      const adjustedLatOffset = latOffset - verticalViewportOffset;
-      
-      const cameraCenter = {
-        lng: currentCameraPos.lng + behindDistance * Math.sin(behindAngleRad),
-        lat: currentCameraPos.lat + adjustedLatOffset
+      // Create a rider coordinate object
+      const riderCoord = {
+        lng: interpolatedPoint[0],
+        lat: interpolatedPoint[1]
       };
       
-      // Use a longer flyTo duration for smoother transitions when using the slider
-      // The increased duration creates much smoother visual transitions
-      map.flyTo({
-        center: [cameraCenter.lng, cameraCenter.lat], 
-        bearing: bearing,
-        pitch: pitch,
-        zoom: zoomLevel,
-        duration: 800, // Use a longer duration for smoother motion with the slider
-        essential: true, // animation will not be interrupted by map movement
-        curve: 1.42, // Use a more natural movement curve (the default is 1.42)
-        easing: function(t) {
-          // Custom easing function for smoother transitions
-          // This is a modified quadratic ease-out that produces more uniform motion
-          return t * (2 - t);
-        }
+      // Use our new camera system for consistency with animation
+      updateCamera(riderCoord, bearing, {
+        // Use a longer transition duration for slider updates
+        transitionDuration: 1500
       });
       
       // Update UI
