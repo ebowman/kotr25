@@ -229,12 +229,23 @@
       </div>
       
       <div class="control-group">
-        <label for="camera-height">Camera Height:</label>
+        <label for="camera-height">Zoom:</label>
         <div class="slider-container">
           <input type="range" id="camera-height" min="1" max="100" step="1" value="25">
           <div class="range-labels">
-            <span>Close</span>
-            <span>Far</span>
+            <span>In</span>
+            <span>Out</span>
+          </div>
+        </div>
+      </div>
+      
+      <div class="control-group">
+        <label for="camera-angle">View Angle:</label>
+        <div class="slider-container">
+          <input type="range" id="camera-angle" min="10" max="85" step="1" value="45">
+          <div class="range-labels">
+            <span>Low</span>
+            <span>High</span>
           </div>
         </div>
       </div>
@@ -333,6 +344,7 @@
     let smoothedRouteDistances = []; // Array to store distances for smoothed route
     let animationSpeed = 0.5;
     let cameraHeight = 25; // Default camera height (slider position, not actual meters)
+    let cameraAngle = 50; // Default camera angle (pitch) in degrees (inverted from slider value of 45)
     let currentRouteDistance = 0; // Current distance along route in meters
     let totalDistanceMeters = 0; // Total distance of the route in meters
     let lastPreCalcHeight = 25; // Track the last height value used for calculation
@@ -490,6 +502,7 @@
     const resetBtn = document.getElementById('reset-btn');
     const speedControl = document.getElementById('speed-control');
     const heightControl = document.getElementById('camera-height');
+    const angleControl = document.getElementById('camera-angle');
     const positionSlider = document.getElementById('position-slider');
     const elevationCanvas = document.getElementById('elevation-canvas');
     const elevationMarker = document.getElementById('elevation-marker');
@@ -982,7 +995,7 @@
       positionSlider.disabled = false;
     }
     
-    // Function to update map view based on current camera height
+    // Function to update map view based on current camera height and angle
     function updateInitialMapView() {
       if (routeCoordinates.length === 0) return;
       
@@ -991,8 +1004,8 @@
       const sliderMin = 1;
       const sliderMax = 100;
       
-      // Adjusted height range (2.5m to 250m - making closest view 2x closer than before)
-      const actualMinHeight = 2.5;  // 2x closer than before (was 5m)
+      // Adjusted height range - making closest view much closer
+      const actualMinHeight = 0.8;  // Much closer view (was 2.5m)
       const actualMaxHeight = 250;  // Keep this the same
       
       // Map slider value to actual height using exponential scale for better control
@@ -1001,27 +1014,16 @@
       const actualHeight = actualMinHeight * Math.pow(actualMaxHeight / actualMinHeight, normalizedSliderValue);
       
       // Zoom range (higher number = closer)
-      // Adjust minimum zoom to be less extreme (use 16.5 instead of 17.5)
-      // This gives a wider field of view at low heights
-      const minZoom = 16.5; // Reduced from 17.5 to give wider field of view at low heights
+      // Increase minimum zoom for a much closer view at minimum height
+      const minZoom = 19.0; // Increased from 16.5 for a much closer view
       const maxZoom = 11.5; // Keep maximum zoom the same
       
       // Calculate zoom level (logarithmic scale)
       const zoomLevel = maxZoom + ((Math.log(actualMaxHeight) - Math.log(actualHeight)) / 
                                   (Math.log(actualMaxHeight) - Math.log(actualMinHeight))) * (minZoom - maxZoom);
       
-      // Calculate pitch based ONLY on camera height
-      // No adjustments for speed or terrain as requested
-      // Same consistent approach as in animation and manual position functions
-      const minPitch = 25; // More horizontal view (was 30)
-      const maxPitch = 70; // Less extreme at high height (was 75)
-
-      // Use the same non-linear curve for pitch as in animation function
-      const pitchCurve = Math.sqrt(normalizedSliderValue);
-      const pitch = minPitch + pitchCurve * (maxPitch - minPitch);
-      
-      // NO adjustment based on speed - keeps consistent angle at all speeds
-      // NO adjustment based on terrain gradient - keeps consistent angle on all terrain
+      // Use the camera angle directly from the slider instead of calculating based on height
+      const pitch = cameraAngle;
       
       // Apply the new view
       map.flyTo({
@@ -1324,8 +1326,8 @@
       const sliderMin = 1;
       const sliderMax = 100;
       
-      // Adjusted height range (2.5m to 250m - making closest view 2x closer than before)
-      const actualMinHeight = 2.5;  // 2x closer than before (was 5m)
+      // Adjusted height range - making closest view much closer
+      const actualMinHeight = 0.8;  // Much closer view (was 2.5m)
       const actualMaxHeight = 250;  // Keep this the same
       
       // Map slider value to actual height using exponential scale for better control
@@ -1333,32 +1335,21 @@
       const actualHeight = actualMinHeight * Math.pow(actualMaxHeight / actualMinHeight, normalizedSliderValue);
       
       // Zoom range (higher number = closer)
-      // Adjust minimum zoom to be less extreme (use 16.5 instead of 17.5)
-      // This gives a wider field of view at low heights
-      const minZoom = 16.5; // Reduced from 17.5 to give wider field of view at low heights
+      // Increase minimum zoom for a much closer view at minimum height
+      const minZoom = 19.0; // Increased from 16.5 for a much closer view
       const maxZoom = 11.5; // Keep maximum zoom the same
       
       // Calculate zoom using the actual height
       const zoomLevel = maxZoom + ((Math.log(actualMaxHeight) - Math.log(actualHeight)) / 
                                  (Math.log(actualMaxHeight) - Math.log(actualMinHeight))) * (minZoom - maxZoom);
       
-      // Calculate pitch based ONLY on camera height
-      // No adjustments for speed or terrain as requested
-      // More horizontal when zoomed in, more overhead when zoomed out
-      
-      // Adjust these values to make the view more horizontal overall
-      const minPitch = 25; // More horizontal view at minimum (was 30)
-      const maxPitch = 70; // Less extreme at maximum height (was 75)
-      
-      // Use height factor for base pitch, but with a curve that favors horizontal views
-      // This makes the transition more weighted toward horizontal views
-      // Square root creates a curve that stays more horizontal until higher zoom levels
-      const pitchCurve = Math.sqrt(normalizedSliderValue); // Non-linear curve for better low-height visibility
-      const pitch = minPitch + pitchCurve * (maxPitch - minPitch);
+      // Use the camera angle directly from the slider instead of calculating based on height
+      // This gives users direct control over the viewing angle
+      const pitch = cameraAngle;
       
       // NO adjustment based on speed - keeps consistent angle at all speeds
       // NO adjustment based on terrain gradient - keeps consistent angle on all terrain
-      // Simply use the height-based pitch directly
+      // Simply use the user-selected camera angle directly
       
       // Position camera behind the rider
       // This creates a true "following drone" perspective from any height
@@ -1756,6 +1747,22 @@
         }
       });
       
+      // Camera angle handler - updates view immediately
+      angleControl.addEventListener('input', () => {
+        // Invert the values - slider shows low to high (10-85), but we need to reverse this
+        // so that when slider is at "Low" position, we get a horizontal view (low angle value)
+        // and when slider is at "High" position, we get an overhead view (high angle value)
+        const sliderValue = parseInt(angleControl.value);
+        
+        // Calculate inverted angle - when slider is at min (10), we want max angle (85)
+        // and vice versa
+        cameraAngle = 95 - sliderValue; // 95 - 10 = 85, 95 - 85 = 10
+        
+        // If animation is not running, update the view immediately
+        if (!animationId && routeCoordinates.length > 0) {
+          updateInitialMapView();
+        }
+      });
       
       speedControl.addEventListener('input', () => {
         animationSpeed = parseFloat(speedControl.value);
@@ -1949,17 +1956,9 @@
       const zoomLevel = maxZoom + ((Math.log(actualMaxHeight) - Math.log(actualHeight)) / 
                                (Math.log(actualMaxHeight) - Math.log(actualMinHeight))) * (minZoom - maxZoom);
       
-      // Calculate pitch based ONLY on camera height
-      // No adjustments for speed or terrain as requested
-      // Matches the approach used in the animation function
-      
-      // Same values as in animation function
-      const minPitch = 25; // More horizontal view (was 30)
-      const maxPitch = 70; // Less extreme at high height (was 75)
-      
-      // Use the same non-linear curve for pitch as in animation function
-      const pitchCurve = Math.sqrt(normalizedSliderValue);
-      const pitch = minPitch + pitchCurve * (maxPitch - minPitch);
+      // Use camera angle directly from the slider instead of calculating based on height
+      // This is consistent with the animation function approach
+      const pitch = cameraAngle;
       
       // NO adjustment based on speed - keeps consistent angle at all speeds
       // NO adjustment based on terrain gradient - keeps consistent angle on all terrain
