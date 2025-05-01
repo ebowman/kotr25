@@ -335,22 +335,55 @@
     let stepSize = 0.5; // Default step size, will be updated during pre-calculation
     let lookAheadInterval = 25; // Default look-ahead interval, will be updated during pre-calculation
     
-    // Helper function to calculate segment data for any distance
+    // Helper function to efficiently calculate segment data for any distance
+    // Uses binary search for much faster lookups, important for smooth animation
     function calculateSegmentForDistance(distanceKm) {
       let beforeIdx = 0;
       let afterIdx = 1;
       let fraction = 0;
       
-      // Find the segment for this distance
-      for (let i = 1; i < routeDistances.length; i++) {
-        if (routeDistances[i] >= distanceKm) {
-          afterIdx = i;
-          beforeIdx = i - 1;
+      // Handle edge cases for start and end of route
+      if (distanceKm <= routeDistances[0]) {
+        return { beforeIdx: 0, afterIdx: 1, fraction: 0 };
+      }
+      
+      if (distanceKm >= routeDistances[routeDistances.length - 1]) {
+        return { 
+          beforeIdx: routeDistances.length - 2, 
+          afterIdx: routeDistances.length - 1, 
+          fraction: 1 
+        };
+      }
+      
+      // Binary search for faster lookup - critical for smooth animation
+      let left = 0;
+      let right = routeDistances.length - 1;
+      
+      while (left <= right) {
+        const mid = Math.floor((left + right) / 2);
+        
+        if (routeDistances[mid] === distanceKm) {
+          // Exact match
+          beforeIdx = mid;
+          afterIdx = Math.min(mid + 1, routeDistances.length - 1);
+          fraction = 0;
           break;
+        }
+        
+        if (routeDistances[mid] < distanceKm) {
+          if (mid < routeDistances.length - 1 && routeDistances[mid + 1] > distanceKm) {
+            // Found the segment
+            beforeIdx = mid;
+            afterIdx = mid + 1;
+            break;
+          }
+          left = mid + 1;
+        } else {
+          right = mid - 1;
         }
       }
       
-      // Calculate the fraction
+      // Calculate the interpolation fraction
       const segmentLength = routeDistances[afterIdx] - routeDistances[beforeIdx];
       if (segmentLength > 0) {
         fraction = (distanceKm - routeDistances[beforeIdx]) / segmentLength;
