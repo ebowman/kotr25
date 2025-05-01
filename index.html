@@ -809,46 +809,37 @@
     // Function to initialize a map when its section is expanded
     function initializeMapIfNeeded(dayId) {
       if (!maps[dayId] && mapConfigs[dayId]) {
+        console.log(`Initializing map for ${dayId}`);
+        
         // Make sure container is empty and visible
         const container = document.getElementById(mapConfigs[dayId].element);
         if (container) {
           // Clear any fallback messages or previous content
           container.innerHTML = '';
           
+          // Inject a visible loading message
+          const loadingDiv = document.createElement('div');
+          loadingDiv.style.position = 'absolute';
+          loadingDiv.style.top = '50%';
+          loadingDiv.style.left = '50%';
+          loadingDiv.style.transform = 'translate(-50%, -50%)';
+          loadingDiv.style.background = 'rgba(255,255,255,0.8)';
+          loadingDiv.style.padding = '10px';
+          loadingDiv.style.borderRadius = '5px';
+          loadingDiv.style.zIndex = '1000';
+          loadingDiv.innerHTML = '<strong>Loading map...</strong>';
+          container.appendChild(loadingDiv);
+          
           // Initialize the map
           maps[dayId] = initMap(mapConfigs[dayId].element, mapConfigs[dayId].files);
           mapConfigs[dayId].initialized = true;
           
-          // Remove fallback message if it exists
-          const fallbackInfo = container.querySelector('.map-fallback-info');
-          if (fallbackInfo) {
-            fallbackInfo.style.display = 'none';
-          }
-          
-          // Wait for map to fully load before applying view
-          maps[dayId].once('load', function() {
-            // Find the active tab for this section to determine initial view
-            const section = container.closest('.day-content');
-            if (section) {
-              const activeTab = section.querySelector('.map-tab.active');
-              if (activeTab) {
-                const [day, type] = activeTab.dataset.tab.split('-');
-                if (type === 'comparison') {
-                  setTimeout(() => showComparison(maps[dayId], dayId), 300);
-                } else if (type === 'short') {
-                  setTimeout(() => showSingleRoute(maps[dayId], dayId, 'short'), 300);
-                } else if (type === 'long') {
-                  setTimeout(() => showSingleRoute(maps[dayId], dayId, 'long'), 300);
-                }
-              } else {
-                // Default to comparison view if no tab is active
-                setTimeout(() => showComparison(maps[dayId], dayId), 300);
-              }
-            } else {
-              // Default to comparison view if no section is found
-              setTimeout(() => showComparison(maps[dayId], dayId), 300);
+          // Remove loading message after a timeout
+          setTimeout(() => {
+            if (loadingDiv && loadingDiv.parentNode) {
+              loadingDiv.parentNode.removeChild(loadingDiv);
             }
-          });
+          }, 1500);
           
           return maps[dayId];
         }
@@ -856,29 +847,26 @@
       return maps[dayId];
     }
     
-    // Only initialize the first map on page load
-    document.addEventListener('DOMContentLoaded', function() {
-      // Initialize only the first map (day0) on page load
-      // Other maps will be initialized when their sections are opened
-      setTimeout(() => {
-        const activeSection = document.querySelector('.day-content:not(.collapsed)');
-        if (activeSection) {
-          const dayId = activeSection.closest('.day-section').querySelector('.day-toggle').textContent
-            .trim().toLowerCase().replace(/\s+/g, '').includes('day0') 
-            ? 'day0' 
-            : activeSection.closest('.day-section').querySelector('.day-toggle').textContent
-                .trim().toLowerCase().replace(/\s+/g, '').includes('day1')
-              ? 'day1'
-              : activeSection.closest('.day-section').querySelector('.day-toggle').textContent
-                  .trim().toLowerCase().replace(/\s+/g, '').includes('day2')
-                ? 'day2'
-                : 'day3';
-          
-          initializeMapIfNeeded(dayId);
-        } else {
-          // If all sections are collapsed, initialize first section's map
-          initializeMapIfNeeded('day0');
+    // Hack a fix directly in the HTML for day1 section to ensure it shows properly
+    // This preloads all maps to avoid the issues with partial loading
+    function preloadAllMaps() {
+      console.log("Preloading all maps...");
+      Object.keys(mapConfigs).forEach(dayId => {
+        if (!maps[dayId]) {
+          setTimeout(() => {
+            initializeMapIfNeeded(dayId);
+          }, 100 * Object.keys(maps).length); // Stagger initialization
         }
+      });
+    }
+    
+    // Initialize all maps at once on page load
+    document.addEventListener('DOMContentLoaded', function() {
+      console.log("DOM content loaded, preloading all maps");
+      
+      // Preload all maps (lazy approach no longer working well)
+      setTimeout(() => {
+        preloadAllMaps();
       }, 500);
       
       // Initialize tabs
@@ -1000,6 +988,12 @@
       map.trackLayers = [];
       map.routesLoaded = false;
       
+      // Store some debugging information
+      map.debugInfo = {
+        id: id,
+        gpxFiles: gpxFiles.slice()
+      };
+      
       // Add error handling
       map.on('error', function(e) {
         if (!map.errorDisplayed) {
@@ -1023,6 +1017,8 @@
       
       // Load GPX files when the map style is fully loaded
       map.on('load', function() {
+        // Add console logging for debugging
+        console.log(`Map ${id} loaded, loading GPX files:`, gpxFiles);
         loadGPXRoutes(map, gpxFiles);
       });
       
@@ -1124,14 +1120,48 @@
           findDecisionPoints(map);
         }
         
-        // Mark routes as loaded
+        // Explicitly set all routes to be visible initially
+        console.log(`Setting initial visibility for ${map.trackLayers.length} routes in map ${map.debugInfo.id}`);
+        
+        // Explicit approach to set all layers to visible
+        for (const item of map.trackLayers) {
+          try {
+            console.log(`Setting layer ${item.layerId} to visible`);
+            map.setLayoutProperty(item.layerId, 'visibility', 'visible');
+          } catch (e) {
+            console.warn(`Error setting visibility on ${item.layerId}:`, e);
+          }
+        }
+        
+        // Mark routes as loaded AFTER setting visibility
         map.routesLoaded = true;
         
-        // Apply default visibility - show all routes initially
-        // This ensures routes are visible right away in comparison mode
-        map.trackLayers.forEach(item => {
-          map.setLayoutProperty(item.layerId, 'visibility', 'visible');
-        });
+        // Force a redraw by triggering a resize event
+        setTimeout(() => {
+          map.resize(); 
+          
+          // Find and run the active tab's show function
+          const dayId = map.debugInfo.id.replace('map-', '');
+          const section = document.getElementById(map.debugInfo.id).closest('.day-content');
+          if (section) {
+            const activeTab = section.querySelector('.map-tab.active');
+            if (activeTab) {
+              console.log(`Running active tab for ${dayId}:`, activeTab.dataset.tab);
+              const [day, type] = activeTab.dataset.tab.split('-');
+              if (type === 'comparison') {
+                showComparison(map, day);
+              } else if (type === 'short') {
+                showSingleRoute(map, day, 'short');
+              } else if (type === 'long') {
+                showSingleRoute(map, day, 'long');
+              }
+            } else {
+              // If no active tab, default to comparison
+              console.log(`No active tab found for ${dayId}, showing comparison`);
+              showComparison(map, dayId);
+            }
+          }
+        }, 300);
       } catch (error) {
         console.error("Error loading GPX routes:", error);
         
