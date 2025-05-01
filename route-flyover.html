@@ -897,7 +897,9 @@
       const actualHeight = actualMinHeight * Math.pow(actualMaxHeight / actualMinHeight, normalizedSliderValue);
       
       // Zoom range (higher number = closer)
-      const minZoom = 17.5; // 2x closer minimum zoom (was 16.5)
+      // Adjust minimum zoom to be less extreme (use 16.5 instead of 17.5)
+      // This gives a wider field of view at low heights
+      const minZoom = 16.5; // Reduced from 17.5 to give wider field of view at low heights
       const maxZoom = 11.5; // Keep maximum zoom the same
       
       // Calculate zoom level (logarithmic scale)
@@ -998,9 +1000,10 @@
       currentPoint = beforeIdx;
       currentPointFloat = beforeIdx + fraction;
       
-      // Calculate camera look-ahead distance based on camera height
+      // Calculate camera look-ahead distance based on camera height and speed
       const normalizedHeight = (cameraHeight - 1) / 99;
-      const lookAheadMeters = 15 + normalizedHeight * 85;
+      const baseAheadMeters = 30 + normalizedHeight * 70; // More minimum look-ahead (30m instead of 15m)
+      const lookAheadMeters = baseAheadMeters * (1 + animationSpeed * 2); // Increase look-ahead with speed
       
       // Calculate camera look-ahead position
       const lookAheadDistanceKm = (currentRouteDistance + lookAheadMeters) / 1000;
@@ -1040,13 +1043,15 @@
         lat: lookAheadCoord[1]
       };
       
-      // Use even lower smoothing factors for ultra-smooth transitions
-      // These very low values (0.01-0.04) create extremely gradual transitions
-      const positionSmoothingFactor = 0.04 - (normalizedHeight * 0.03); // Range from 0.04 to 0.01
-      const bearingSmoothingFactor = 0.03 - (normalizedHeight * 0.02); // Range from 0.03 to 0.01
+      // Adjust smoothing factors based on height and speed
+      // Make camera more responsive at higher speeds to prevent rider going off-screen
+      const speedFactor = Math.max(0.5, 1 - animationSpeed); // Less smoothing at high speeds
+      const positionSmoothingFactor = (0.04 - (normalizedHeight * 0.03)) * speedFactor; // Reduced smoothing at high speeds
+      const bearingSmoothingFactor = (0.03 - (normalizedHeight * 0.02)) * speedFactor; // Reduced smoothing at high speeds
       
       // Apply additional damping for higher camera positions (makes movement even smoother at height)
-      const damping = normalizedHeight * 0.5 + 0.5; // 0.5 to 1.0
+      // But reduce damping at high speeds to keep camera more responsive
+      const damping = (normalizedHeight * 0.5 + 0.5) * speedFactor;
       
       // Smooth position movement with EMA (Exponential Moving Average)
       // Use a weighted blend of previous and target positions
@@ -1086,7 +1091,9 @@
       const actualHeight = actualMinHeight * Math.pow(actualMaxHeight / actualMinHeight, normalizedSliderValue);
       
       // Zoom range (higher number = closer)
-      const minZoom = 17.5; // 2x closer minimum zoom (was 16.5)
+      // Adjust minimum zoom to be less extreme (use 16.5 instead of 17.5)
+      // This gives a wider field of view at low heights
+      const minZoom = 16.5; // Reduced from 17.5 to give wider field of view at low heights
       const maxZoom = 11.5; // Keep maximum zoom the same
       
       // Calculate zoom using the actual height
@@ -1102,9 +1109,14 @@
       // This creates a true "following drone" perspective from any height
       let cameraCenter;
       
-      // Calculate the distance to position the camera behind based on actual height
+      // Calculate the distance to position the camera behind rider
+      // Increase minimum distance and adjust based on speed
       // Higher = further back, using normalized slider value for a smooth progression
-      const behindDistance = 0.0002 + normalizedSliderValue * 0.0012;
+      const minBehindDistance = 0.0005; // 2.5x increase from original 0.0002
+      const maxBehindDistance = 0.0014; // Slightly increased from original 0.0012
+      const behindDistance = minBehindDistance + 
+                             (normalizedSliderValue * (maxBehindDistance - minBehindDistance)) + 
+                             (animationSpeed * 0.0005); // Add speed-based offset
       
       // Position directly behind by using the opposite of the travel direction
       const behindAngle = (currentCameraBearing + 180) % 360; // 180 degrees opposite of travel direction
@@ -1625,7 +1637,11 @@
       const pitch = minPitch + normalizedSliderValue * (maxPitch - minPitch);
       
       // Position camera behind the rider - same as in animation
-      const behindDistance = 0.0002 + normalizedSliderValue * 0.0012;
+      // Use same formula as in animation for consistency
+      const minBehindDistance = 0.0005;
+      const maxBehindDistance = 0.0014;
+      const behindDistance = minBehindDistance + 
+                           (normalizedSliderValue * (maxBehindDistance - minBehindDistance));
       const behindAngle = (bearing + 180) % 360; // 180 degrees opposite of travel direction
       const behindAngleRad = behindAngle * Math.PI / 180;
       
