@@ -37,6 +37,19 @@
       color: #333;
       border-bottom: 2px solid #ddd;
       padding-bottom: 0.5rem;
+      cursor: pointer;
+      user-select: none;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    h2:after {
+      content: "▼";
+      font-size: 0.8rem;
+      transition: transform 0.3s ease;
+    }
+    h2.collapsed:after {
+      transform: rotate(-90deg);
     }
     h3 {
       margin-top: 1rem;
@@ -48,6 +61,17 @@
       border-radius: 10px;
       box-shadow: 0 4px 8px rgba(0,0,0,0.05);
       padding: 1.5rem;
+    }
+    .day-content {
+      transition: max-height 0.5s ease, opacity 0.3s ease;
+      max-height: 2000px;
+      opacity: 1;
+      overflow: hidden;
+    }
+    .day-content.collapsed {
+      max-height: 0;
+      opacity: 0;
+      margin-top: 0;
     }
     .route-container {
       display: flex;
@@ -92,56 +116,102 @@
     </div>
 
     <div class="day-section">
-      <h2>Day 0 - Warm-up Ride <span class="date">May 22, 2025</span></h2>
-      <div class="route">
-        <h3>Warm-up Route</h3>
-        <div class="strava-embed-placeholder" data-embed-type="route" data-embed-id="3352952321743025716" data-style="standard" data-map-hash="10.13/46.0523/14.5781" data-from-embed="true"></div>
-      </div>
-    </div>
-
-    <div class="day-section">
-      <h2>Day 1 <span class="date">May 23, 2025</span></h2>
-      <div class="route-container">
+      <h2 class="day-toggle">Day 0 - Warm-up Ride <span class="date">May 22, 2025</span></h2>
+      <div class="day-content">
         <div class="route">
-          <h3>Short Ride Option</h3>
-          <div class="strava-embed-placeholder" data-embed-type="route" data-embed-id="3352952599441377432" data-style="standard" data-from-embed="false"></div>
-        </div>
-        <div class="route">
-          <h3>Long Ride Option</h3>
-          <div class="strava-embed-placeholder" data-embed-type="route" data-embed-id="3352952828352792116" data-style="standard" data-from-embed="false"></div>
+          <h3>Warm-up Route</h3>
+          <div class="strava-embed-placeholder" data-embed-type="route" data-embed-id="3352952321743025716" data-style="standard" data-map-hash="10.13/46.0523/14.5781" data-from-embed="true"></div>
         </div>
       </div>
     </div>
 
     <div class="day-section">
-      <h2>Day 2 <span class="date">May 24, 2025</span></h2>
-      <div class="route-container">
-        <div class="route">
-          <h3>Short Ride Option</h3>
-          <div class="strava-embed-placeholder" data-embed-type="route" data-embed-id="3352953250499092020" data-style="standard" data-from-embed="false"></div>
-        </div>
-        <div class="route">
-          <h3>Long Ride Option</h3>
-          <div class="strava-embed-placeholder" data-embed-type="route" data-embed-id="3352953056042166424" data-style="standard" data-from-embed="false"></div>
+      <h2 class="day-toggle">Day 1 <span class="date">May 23, 2025</span></h2>
+      <div class="day-content">
+        <div class="route-container">
+          <div class="route">
+            <h3>Short Ride Option</h3>
+            <div class="strava-embed-placeholder" data-embed-type="route" data-embed-id="3352952599441377432" data-style="standard" data-from-embed="false"></div>
+          </div>
+          <div class="route">
+            <h3>Long Ride Option</h3>
+            <div class="strava-embed-placeholder" data-embed-type="route" data-embed-id="3352952828352792116" data-style="standard" data-from-embed="false"></div>
+          </div>
         </div>
       </div>
     </div>
 
     <div class="day-section">
-      <h2>Day 3 <span class="date">May 25, 2025</span></h2>
-      <div class="route-container">
-        <div class="route">
-          <h3>Short Ride Option</h3>
-          <div class="strava-embed-placeholder" data-embed-type="route" data-embed-id="3352953610025735896" data-style="standard" data-from-embed="false"></div>
+      <h2 class="day-toggle">Day 2 <span class="date">May 24, 2025</span></h2>
+      <div class="day-content">
+        <div class="route-container">
+          <div class="route">
+            <h3>Short Ride Option</h3>
+            <div class="strava-embed-placeholder" data-embed-type="route" data-embed-id="3352953250499092020" data-style="standard" data-from-embed="false"></div>
+          </div>
+          <div class="route">
+            <h3>Long Ride Option</h3>
+            <div class="strava-embed-placeholder" data-embed-type="route" data-embed-id="3352953056042166424" data-style="standard" data-from-embed="false"></div>
+          </div>
         </div>
-        <div class="route">
-          <h3>Long Ride Option</h3>
-          <div class="strava-embed-placeholder" data-embed-type="route" data-embed-id="3352953454882061876" data-style="standard" data-from-embed="false"></div>
+      </div>
+    </div>
+
+    <div class="day-section">
+      <h2 class="day-toggle">Day 3 <span class="date">May 25, 2025</span></h2>
+      <div class="day-content">
+        <div class="route-container">
+          <div class="route">
+            <h3>Short Ride Option</h3>
+            <div class="strava-embed-placeholder" data-embed-type="route" data-embed-id="3352953610025735896" data-style="standard" data-from-embed="false"></div>
+          </div>
+          <div class="route">
+            <h3>Long Ride Option</h3>
+            <div class="strava-embed-placeholder" data-embed-type="route" data-embed-id="3352953454882061876" data-style="standard" data-from-embed="false"></div>
+          </div>
         </div>
       </div>
     </div>
   </div>
 
   <script src="https://strava-embeds.com/embed.js"></script>
+  <script>
+    document.addEventListener('DOMContentLoaded', function() {
+      const toggles = document.querySelectorAll('.day-toggle');
+      
+      toggles.forEach(toggle => {
+        toggle.addEventListener('click', function() {
+          // Toggle the collapsed class on the title
+          this.classList.toggle('collapsed');
+          
+          // Find the content section and toggle its collapsed class
+          const content = this.nextElementSibling;
+          content.classList.toggle('collapsed');
+          
+          // Re-initialize the Strava embeds when expanding
+          if (!content.classList.contains('collapsed')) {
+            if (window.StravaEmbed) {
+              window.StravaEmbed.init();
+            }
+          }
+        });
+      });
+      
+      // Optional: Start with all sections expanded except the first one
+      // Uncomment the following lines if you want this behavior
+      /*
+      const firstToggle = toggles[0];
+      if (firstToggle) {
+        firstToggle.classList.remove('collapsed');
+        firstToggle.nextElementSibling.classList.remove('collapsed');
+        
+        for (let i = 1; i < toggles.length; i++) {
+          toggles[i].classList.add('collapsed');
+          toggles[i].nextElementSibling.classList.add('collapsed');
+        }
+      }
+      */
+    });
+  </script>
 </body>
 </html>
