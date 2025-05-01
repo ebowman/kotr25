@@ -799,12 +799,122 @@
           return;
         }
         
-        // Find a plausible decision point near the first third of the route
-        const shortIndex = Math.floor(shortPoints.length / 3);
-        const longIndex = Math.floor(longPoints.length / 3);
+        // Find the actual divergence point by comparing the routes
+        let shortIndex = 0, longIndex = 0;
+        const threshold = 0.0005; // ~50 meters divergence threshold
+        let foundDivergence = false;
+        
+        // Calculate approximate distances for both routes to estimate where 1km would be
+        const estimateDistancePerPoint = (points) => {
+          if (points.length < 2) return 0;
+          
+          // Sample a few segments to get an average
+          let totalDist = 0;
+          const samples = Math.min(10, points.length - 1);
+          const step = Math.floor(points.length / samples);
+          
+          for (let i = 0; i < samples; i++) {
+            const idx1 = i * step;
+            const idx2 = Math.min((i + 1) * step, points.length - 1);
+            totalDist += getDistance(points[idx1], points[idx2]);
+          }
+          
+          return totalDist / samples; // average distance per step
+        };
+        
+        // Roughly estimate distance per point
+        const shortDistPerPoint = estimateDistancePerPoint(shortPoints);
+        const longDistPerPoint = estimateDistancePerPoint(longPoints);
+        
+        // Estimate number of points to cover 1km (0.01 in lat/long is roughly 1.1km)
+        // This is a very rough approximation that depends on latitude, but good enough for our purposes
+        const shortSkipPoints = Math.max(50, Math.round(0.01 / shortDistPerPoint));
+        const longSkipPoints = Math.max(50, Math.round(0.01 / longDistPerPoint));
+        
+        // We need to scan through the routes and find where they start to diverge
+        // Using a sliding window approach to find matching segments
+        const maxCheck = Math.min(shortPoints.length, longPoints.length) - 1;
+        
+        // First, find roughly similar starting points by comparing first few points
+        let shortStartIdx = shortSkipPoints; // Skip first ~1km
+        let longStartIdx = longSkipPoints; // Skip first ~1km
+        let minDist = Number.MAX_VALUE;
+        
+        // Adjust starting indices to find matching points after the first kilometer
+        const sampleSize = 20;
+        for (let i = 0; i < sampleSize; i++) {
+          const shortIdx = shortStartIdx + i;
+          if (shortIdx >= shortPoints.length) continue;
+          
+          for (let j = 0; j < sampleSize; j++) {
+            const longIdx = longStartIdx + j;
+            if (longIdx >= longPoints.length) continue;
+            
+            const dist = getDistance(shortPoints[shortIdx], longPoints[longIdx]);
+            if (dist < minDist) {
+              minDist = dist;
+              shortStartIdx = shortIdx;
+              longStartIdx = longIdx;
+            }
+          }
+        }
+        
+        // Start checking from the matched start points
+        for (let i = 0; i < maxCheck - Math.max(shortStartIdx, longStartIdx); i++) {
+          const shortIdx = Math.min(shortStartIdx + i, shortPoints.length - 1);
+          const longIdx = Math.min(longStartIdx + i, longPoints.length - 1);
+          
+          const distance = getDistance(shortPoints[shortIdx], longPoints[longIdx]);
+          
+          if (distance > threshold) {
+            // We found where the routes diverge (after the first km)
+            shortIndex = shortIdx;
+            longIndex = longIdx;
+            foundDivergence = true;
+            break;
+          }
+        }
+        
+        // If we couldn't find a clear divergence, fall back to checking distance every N points
+        if (!foundDivergence) {
+          // Sample every N points to find the divergence, starting after the first kilometer
+          const sampleRate = Math.max(1, Math.floor(Math.min(shortPoints.length, longPoints.length) / 20));
+          const startSample = Math.max(shortSkipPoints, longSkipPoints);
+          
+          for (let i = startSample; i < Math.min(shortPoints.length, longPoints.length); i += sampleRate) {
+            // Make sure we don't go out of bounds
+            if (i >= shortPoints.length || i >= longPoints.length) break;
+            
+            const distance = getDistance(shortPoints[i], longPoints[i]);
+            if (distance > threshold) {
+              shortIndex = i;
+              longIndex = i;
+              foundDivergence = true;
+              break;
+            }
+          }
+        }
+        
+        // If still no divergence found, fall back to 1/3 of the route
+        if (!foundDivergence) {
+          shortIndex = Math.floor(shortPoints.length / 3);
+          longIndex = Math.floor(longPoints.length / 3);
+        }
+        
+        // Ensure we're not choosing a point too early in the route
+        shortIndex = Math.max(shortIndex, shortSkipPoints);
+        longIndex = Math.max(longIndex, longSkipPoints);
         
         const shortPoint = shortPoints[shortIndex];
         const longPoint = longPoints[longIndex];
+        
+        // Helper function to calculate distance between two points
+        function getDistance(point1, point2) {
+          return Math.sqrt(
+            Math.pow(point1.lat - point2.lat, 2) + 
+            Math.pow(point1.lng - point2.lng, 2)
+          );
+        }
         
         // Calculate a midpoint between them as the decision point
         const decisionPoint = L.latLng(
