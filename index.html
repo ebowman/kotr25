@@ -825,6 +825,31 @@
             fallbackInfo.style.display = 'none';
           }
           
+          // Wait for map to fully load before applying view
+          maps[dayId].once('load', function() {
+            // Find the active tab for this section to determine initial view
+            const section = container.closest('.day-content');
+            if (section) {
+              const activeTab = section.querySelector('.map-tab.active');
+              if (activeTab) {
+                const [day, type] = activeTab.dataset.tab.split('-');
+                if (type === 'comparison') {
+                  setTimeout(() => showComparison(maps[dayId], dayId), 300);
+                } else if (type === 'short') {
+                  setTimeout(() => showSingleRoute(maps[dayId], dayId, 'short'), 300);
+                } else if (type === 'long') {
+                  setTimeout(() => showSingleRoute(maps[dayId], dayId, 'long'), 300);
+                }
+              } else {
+                // Default to comparison view if no tab is active
+                setTimeout(() => showComparison(maps[dayId], dayId), 300);
+              }
+            } else {
+              // Default to comparison view if no section is found
+              setTimeout(() => showComparison(maps[dayId], dayId), 300);
+            }
+          });
+          
           return maps[dayId];
         }
       }
@@ -1101,6 +1126,12 @@
         
         // Mark routes as loaded
         map.routesLoaded = true;
+        
+        // Apply default visibility - show all routes initially
+        // This ensures routes are visible right away in comparison mode
+        map.trackLayers.forEach(item => {
+          map.setLayoutProperty(item.layerId, 'visibility', 'visible');
+        });
       } catch (error) {
         console.error("Error loading GPX routes:", error);
         
@@ -1235,11 +1266,46 @@
     
     // Function to show comparison view
     function showComparison(map, day) {
-      if (!map || !map.routesLoaded) return;
+      if (!map) return;
+      
+      // If map is still loading, wait for it to finish
+      if (!map.routesLoaded) {
+        // Check if we already have a load listener for this action
+        if (!map._waitingForComparison) {
+          map._waitingForComparison = true;
+          
+          // Wait for routes to be loaded
+          const checkRoutesLoaded = function() {
+            if (map.routesLoaded) {
+              // Show all layers
+              map.trackLayers.forEach(item => {
+                if (map.getLayer(item.layerId)) {
+                  map.setLayoutProperty(item.layerId, 'visibility', 'visible');
+                }
+              });
+              
+              // Show decision marker if it exists
+              if (map.decisionMarker) {
+                map.decisionMarker.addTo(map);
+              }
+              
+              map._waitingForComparison = false;
+            } else {
+              // Check again in a short while
+              setTimeout(checkRoutesLoaded, 100);
+            }
+          };
+          
+          checkRoutesLoaded();
+        }
+        return;
+      }
       
       // Show all layers
       map.trackLayers.forEach(item => {
-        map.setLayoutProperty(item.layerId, 'visibility', 'visible');
+        if (map.getLayer(item.layerId)) {
+          map.setLayoutProperty(item.layerId, 'visibility', 'visible');
+        }
       });
       
       // Show decision marker if it exists
@@ -1250,11 +1316,65 @@
     
     // Function to show just one route
     function showSingleRoute(map, day, routeType) {
-      if (!map || !map.routesLoaded) return;
+      if (!map) return;
+      
+      // If map is still loading, wait for it to finish
+      if (!map.routesLoaded) {
+        // Check if we already have a load listener for this action
+        if (!map._waitingForSingleRoute) {
+          map._waitingForSingleRoute = true;
+          map._pendingRouteType = routeType;
+          
+          // Wait for routes to be loaded
+          const checkRoutesLoaded = function() {
+            if (map.routesLoaded) {
+              // Apply single route view once loaded
+              const rt = map._pendingRouteType;
+              
+              // Hide all layers first
+              map.trackLayers.forEach(item => {
+                if (map.getLayer(item.layerId)) {
+                  map.setLayoutProperty(item.layerId, 'visibility', 'none');
+                }
+              });
+              
+              // Hide decision marker if it exists
+              if (map.decisionMarker) {
+                map.decisionMarker.remove();
+              }
+              
+              // Show only the requested route
+              const layerToShow = map.trackLayers.find(item => 
+                rt === 'short' ? item.type === 'short' : 
+                rt === 'long' ? item.type === 'long' : 
+                item.type === 'single'
+              );
+              
+              if (layerToShow && map.getLayer(layerToShow.layerId)) {
+                map.setLayoutProperty(layerToShow.layerId, 'visibility', 'visible');
+              }
+              
+              map._waitingForSingleRoute = false;
+              delete map._pendingRouteType;
+            } else {
+              // Check again in a short while
+              setTimeout(checkRoutesLoaded, 100);
+            }
+          };
+          
+          checkRoutesLoaded();
+        } else {
+          // Update the pending route type if we're already waiting
+          map._pendingRouteType = routeType;
+        }
+        return;
+      }
       
       // Hide all layers first
       map.trackLayers.forEach(item => {
-        map.setLayoutProperty(item.layerId, 'visibility', 'none');
+        if (map.getLayer(item.layerId)) {
+          map.setLayoutProperty(item.layerId, 'visibility', 'none');
+        }
       });
       
       // Hide decision marker if it exists
@@ -1269,7 +1389,7 @@
         item.type === 'single'
       );
       
-      if (layerToShow) {
+      if (layerToShow && map.getLayer(layerToShow.layerId)) {
         map.setLayoutProperty(layerToShow.layerId, 'visibility', 'visible');
       }
     }
