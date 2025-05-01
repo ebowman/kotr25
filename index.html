@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://unpkg.com/leaflet-gpx@1.7.0/gpx.js"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
   <style>
     body {
       font-family: 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
@@ -236,6 +237,148 @@
       position: relative;
       z-index: 1;
     }
+    
+    /* Weather Widget Styles */
+    .weather-widget {
+      background: linear-gradient(to bottom, #f0f8ff, #e6f3ff);
+      border-radius: 10px;
+      padding: 16px;
+      margin-top: 20px;
+      box-shadow: 0 4px 6px rgba(0,0,0,0.06);
+      border: 1px solid #d0e0f0;
+      display: flex;
+      flex-direction: column;
+      font-size: 0.9rem;
+    }
+    
+    .weather-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid #e0e9f5;
+    }
+    
+    .weather-title {
+      font-weight: 600;
+      font-size: 1rem;
+      color: #2c3e50;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    
+    .weather-title i {
+      color: #3498db;
+    }
+    
+    .weather-refresh {
+      font-size: 0.8rem;
+      color: #7f8c8d;
+      cursor: pointer;
+      padding: 4px 8px;
+      border-radius: 4px;
+      transition: all 0.2s;
+    }
+    
+    .weather-refresh:hover {
+      background: #e0e9f5;
+      color: #2980b9;
+    }
+    
+    .weather-content {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 16px;
+    }
+    
+    .weather-day {
+      flex: 1;
+      min-width: 150px;
+      background: white;
+      border-radius: 8px;
+      padding: 12px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.03);
+      text-align: center;
+      transition: transform 0.2s;
+    }
+    
+    .weather-day:hover {
+      transform: translateY(-3px);
+      box-shadow: 0 4px 8px rgba(0,0,0,0.08);
+    }
+    
+    .weather-date {
+      font-weight: 600;
+      margin-bottom: 8px;
+      color: #34495e;
+    }
+    
+    .weather-icon {
+      font-size: 2rem;
+      margin: 8px 0;
+      color: #f39c12;
+    }
+    
+    .weather-temp {
+      font-size: 1.4rem;
+      font-weight: 600;
+      margin-bottom: 4px;
+      color: #2c3e50;
+    }
+    
+    .weather-desc {
+      color: #7f8c8d;
+      font-size: 0.85rem;
+      margin-bottom: 8px;
+    }
+    
+    .weather-details {
+      display: flex;
+      justify-content: space-around;
+      font-size: 0.8rem;
+      color: #34495e;
+    }
+    
+    .weather-loading {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 30px;
+      color: #7f8c8d;
+    }
+    
+    .weather-loading i {
+      animation: spin 2s linear infinite;
+      margin-right: 8px;
+      color: #3498db;
+    }
+    
+    .weather-error {
+      color: #e74c3c;
+      text-align: center;
+      padding: 15px;
+    }
+    
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    
+    .weather-alert {
+      background: #fef9e7;
+      border-left: 4px solid #f39c12;
+      padding: 10px;
+      margin-top: 10px;
+      border-radius: 4px;
+      font-size: 0.85rem;
+    }
+    
+    .weather-alert.severe {
+      background: #fae1dd;
+      border-left-color: #e74c3c;
+    }
   </style>
 </head>
 <body>
@@ -283,6 +426,31 @@
               <div class="map-note">
                 Note: Interactive maps may not work when viewing via file:// protocol.
               </div>
+            </div>
+          </div>
+          
+          <div class="weather-widget" id="weather-day0" data-lat="46.0523" data-lon="14.5781" data-date="2025-05-22">
+            <div class="weather-header">
+              <div class="weather-title">
+                <i class="fas fa-cloud-sun"></i> Weather Forecast
+                <span style="font-size: 0.8rem; font-weight: normal; margin-left: 8px; color: #666;">Ljubljana, Slovenia</span>
+              </div>
+              <div class="weather-refresh" onclick="refreshWeather('day0')">
+                <i class="fas fa-sync-alt"></i> Refresh
+              </div>
+            </div>
+            <div class="weather-content">
+              <div class="weather-loading">
+                <i class="fas fa-spinner"></i> Loading weather forecast...
+              </div>
+            </div>
+            <div class="weather-toggle-container" style="text-align: center; margin-top: 8px; font-size: 0.85rem;">
+              <a href="#" onclick="toggleForecastMode('day0', 'historical'); return false;" style="margin-right: 15px; color: #3498db;">
+                <i class="fas fa-history"></i> Historical Average
+              </a>
+              <a href="#" onclick="toggleForecastMode('day0', 'forecast'); return false;" style="color: #3498db;">
+                <i class="fas fa-cloud-sun-rain"></i> Current Forecast
+              </a>
             </div>
           </div>
           
@@ -342,6 +510,31 @@
             <div class="map-note">
               Note: Interactive maps may not work when viewing via file:// protocol.
             </div>
+          </div>
+        </div>
+        
+        <div class="weather-widget" id="weather-day1" data-lat="46.0523" data-lon="14.5781" data-date="2025-05-23">
+          <div class="weather-header">
+            <div class="weather-title">
+              <i class="fas fa-cloud-sun"></i> Weather Forecast
+              <span style="font-size: 0.8rem; font-weight: normal; margin-left: 8px; color: #666;">Ljubljana, Slovenia</span>
+            </div>
+            <div class="weather-refresh" onclick="refreshWeather('day1')">
+              <i class="fas fa-sync-alt"></i> Refresh
+            </div>
+          </div>
+          <div class="weather-content">
+            <div class="weather-loading">
+              <i class="fas fa-spinner"></i> Loading weather forecast...
+            </div>
+          </div>
+          <div class="weather-toggle-container" style="text-align: center; margin-top: 8px; font-size: 0.85rem;">
+            <a href="#" onclick="toggleForecastMode('day1', 'historical'); return false;" style="margin-right: 15px; color: #3498db;">
+              <i class="fas fa-history"></i> Historical Average
+            </a>
+            <a href="#" onclick="toggleForecastMode('day1', 'forecast'); return false;" style="color: #3498db;">
+              <i class="fas fa-cloud-sun-rain"></i> Current Forecast
+            </a>
           </div>
         </div>
         <div class="legend">
@@ -411,6 +604,31 @@
             </div>
           </div>
         </div>
+        
+        <div class="weather-widget" id="weather-day2" data-lat="46.0523" data-lon="14.5781" data-date="2025-05-24">
+          <div class="weather-header">
+            <div class="weather-title">
+              <i class="fas fa-cloud-sun"></i> Weather Forecast
+              <span style="font-size: 0.8rem; font-weight: normal; margin-left: 8px; color: #666;">Ljubljana, Slovenia</span>
+            </div>
+            <div class="weather-refresh" onclick="refreshWeather('day2')">
+              <i class="fas fa-sync-alt"></i> Refresh
+            </div>
+          </div>
+          <div class="weather-content">
+            <div class="weather-loading">
+              <i class="fas fa-spinner"></i> Loading weather forecast...
+            </div>
+          </div>
+          <div class="weather-toggle-container" style="text-align: center; margin-top: 8px; font-size: 0.85rem;">
+            <a href="#" onclick="toggleForecastMode('day2', 'historical'); return false;" style="margin-right: 15px; color: #3498db;">
+              <i class="fas fa-history"></i> Historical Average
+            </a>
+            <a href="#" onclick="toggleForecastMode('day2', 'forecast'); return false;" style="color: #3498db;">
+              <i class="fas fa-cloud-sun-rain"></i> Current Forecast
+            </a>
+          </div>
+        </div>
         <div class="legend">
           <div class="legend-item">
             <div class="legend-color" style="background: blue;"></div>
@@ -476,6 +694,31 @@
             <div class="map-note">
               Note: Interactive maps may not work when viewing via file:// protocol.
             </div>
+          </div>
+        </div>
+        
+        <div class="weather-widget" id="weather-day3" data-lat="46.0523" data-lon="14.5781" data-date="2025-05-25">
+          <div class="weather-header">
+            <div class="weather-title">
+              <i class="fas fa-cloud-sun"></i> Weather Forecast
+              <span style="font-size: 0.8rem; font-weight: normal; margin-left: 8px; color: #666;">Ljubljana, Slovenia</span>
+            </div>
+            <div class="weather-refresh" onclick="refreshWeather('day3')">
+              <i class="fas fa-sync-alt"></i> Refresh
+            </div>
+          </div>
+          <div class="weather-content">
+            <div class="weather-loading">
+              <i class="fas fa-spinner"></i> Loading weather forecast...
+            </div>
+          </div>
+          <div class="weather-toggle-container" style="text-align: center; margin-top: 8px; font-size: 0.85rem;">
+            <a href="#" onclick="toggleForecastMode('day3', 'historical'); return false;" style="margin-right: 15px; color: #3498db;">
+              <i class="fas fa-history"></i> Historical Average
+            </a>
+            <a href="#" onclick="toggleForecastMode('day3', 'forecast'); return false;" style="color: #3498db;">
+              <i class="fas fa-cloud-sun-rain"></i> Current Forecast
+            </a>
           </div>
         </div>
         <div class="legend">
@@ -993,6 +1236,610 @@
       
       if (layerToShow) {
         map.addLayer(layerToShow.layer);
+      }
+    }
+    
+    // Weather widget functionality
+  
+    // Load all weather widgets when the page loads
+    document.addEventListener('DOMContentLoaded', function() {
+      const weatherWidgets = document.querySelectorAll('.weather-widget');
+      weatherWidgets.forEach(widget => {
+        const dayId = widget.id.replace('weather-', '');
+        loadWeatherForecast(dayId);
+      });
+    });
+    
+    // Function to refresh a specific weather widget
+    function refreshWeather(dayId) {
+      const widget = document.getElementById(`weather-${dayId}`);
+      if (!widget) return;
+      
+      // Show loading state
+      const content = widget.querySelector('.weather-content');
+      content.innerHTML = `
+        <div class="weather-loading">
+          <i class="fas fa-spinner"></i> Refreshing weather forecast...
+        </div>
+      `;
+      
+      // Load fresh weather data
+      loadWeatherForecast(dayId);
+    }
+    
+    // Function to load weather forecast for a specific day
+    function loadWeatherForecast(dayId) {
+      const widget = document.getElementById(`weather-${dayId}`);
+      if (!widget) return;
+      
+      const lat = widget.dataset.lat;
+      const lon = widget.dataset.lon;
+      const date = widget.dataset.date;
+      
+      fetchWeatherData(lat, lon, date)
+        .then(data => {
+          displayWeatherData(dayId, data);
+        })
+        .catch(error => {
+          displayWeatherError(dayId, error);
+        });
+    }
+    
+    // Function to fetch weather data from Open-Meteo API
+    async function fetchWeatherData(lat, lon, date) {
+      try {
+        // Parse the target date
+        const targetDate = new Date(date);
+        
+        // Get current date to determine if we need historical or forecast data
+        const currentDate = new Date();
+        
+        // We need to use historical API if the date is more than a day in the past
+        const isHistorical = targetDate < new Date(currentDate.getTime() - 24 * 60 * 60 * 1000);
+        
+        // Calculate start and end dates for 3-day window around target date
+        const startDate = new Date(targetDate);
+        startDate.setDate(startDate.getDate() - 1);
+        const endDate = new Date(targetDate);
+        endDate.setDate(endDate.getDate() + 1);
+        
+        // Format dates as YYYY-MM-DD for API
+        const formatAPIDate = (date) => {
+          return date.toISOString().split('T')[0];
+        };
+        
+        // Prepare API URL based on whether we need historical or forecast data
+        let apiUrl;
+        
+        if (isHistorical) {
+          // For historical data (past)
+          apiUrl = `https://archive-api.open-meteo.com/v1/archive?latitude=${lat}&longitude=${lon}` +
+            `&start_date=${formatAPIDate(startDate)}&end_date=${formatAPIDate(endDate)}` +
+            `&daily=weathercode,temperature_2m_max,temperature_2m_min,precipitation_sum,windspeed_10m_max` +
+            `&timezone=auto`;
+        } else {
+          // For forecast data (future or current)
+          apiUrl = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
+            `&daily=weathercode,temperature_2m_max,temperature_2m_min,precipitation_probability_max,windspeed_10m_max` +
+            `&current_weather=true&timezone=auto`;
+        }
+        
+        // Make the API request
+        const response = await fetch(apiUrl);
+        
+        if (!response.ok) {
+          throw new Error(`Weather API error: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        
+        // Process the data into our desired format
+        return processWeatherData(data, targetDate, isHistorical);
+        
+      } catch (error) {
+        console.error('Error fetching weather data:', error);
+        throw new Error('Unable to fetch weather forecast. Please try again later.');
+      }
+    }
+    
+    // Process the API response into our app's weather format
+    function processWeatherData(data, targetDate, isHistorical) {
+      // Create an array to hold our processed forecast
+      const forecast = [];
+      
+      // Get the daily data arrays from the API response
+      const { daily } = data;
+      
+      if (!daily || !daily.time || daily.time.length === 0) {
+        throw new Error('Invalid weather data format');
+      }
+      
+      // Get indices for the 3 days we want to display
+      const startIdx = 0; // First day in the response
+      const endIdx = Math.min(daily.time.length - 1, 2); // Up to 3 days
+      
+      // Process each day's weather data
+      for (let i = startIdx; i <= endIdx; i++) {
+        const date = new Date(daily.time[i]);
+        const weatherCode = daily.weathercode[i];
+        const maxTemp = Math.round(daily.temperature_2m_max[i]);
+        const minTemp = Math.round(daily.temperature_2m_min[i]);
+        const avgTemp = Math.round((maxTemp + minTemp) / 2);
+        const windSpeed = Math.round(daily.windspeed_10m_max[i]);
+        
+        // Precipitation probability is only available in forecast data
+        // For historical, we can approximate from precipitation_sum
+        let chanceOfRain = 0;
+        if (isHistorical) {
+          // Rough approximation: if there was precipitation, say 70% chance
+          chanceOfRain = daily.precipitation_sum[i] > 0 ? 70 : 10;
+        } else {
+          // For forecast data, we have the probability directly
+          chanceOfRain = daily.precipitation_probability_max ? 
+            daily.precipitation_probability_max[i] : 0;
+        }
+        
+        // Map WMO weather codes to our icon and description
+        // https://www.nodc.noaa.gov/archive/arc0021/0002199/1.1/data/0-data/HTML/WMO-CODE/WMO4677.HTM
+        const weatherInfo = getWeatherInfo(weatherCode);
+        
+        forecast.push({
+          date: date,
+          temp: avgTemp,
+          tempMax: maxTemp,
+          tempMin: minTemp,
+          icon: weatherInfo.icon,
+          description: weatherInfo.description,
+          windSpeed: windSpeed,
+          chanceOfRain: chanceOfRain,
+          weatherCode: weatherCode
+        });
+      }
+      
+      // Generate weather alert if conditions warrant it
+      const alert = generateWeatherAlert(forecast);
+      
+      return {
+        forecast: forecast,
+        alert: alert
+      };
+    }
+    
+    // Map WMO weather codes to icons and descriptions
+    function getWeatherInfo(code) {
+      // Weather codes from Open-Meteo API: https://open-meteo.com/en/docs
+      // WMO Weather interpretation codes (WW)
+      switch (true) {
+        case code === 0: // Clear sky
+          return { icon: 'sun', description: 'Clear sky' };
+        case code === 1: // Mainly clear
+          return { icon: 'sun', description: 'Mainly clear' };
+        case code === 2: // Partly cloudy
+          return { icon: 'cloud-sun', description: 'Partly cloudy' };
+        case code === 3: // Overcast
+          return { icon: 'cloud', description: 'Overcast' };
+        case code === 45 || code === 48: // Fog
+          return { icon: 'smog', description: 'Fog' };
+        case code >= 51 && code <= 55: // Drizzle
+          return { icon: 'cloud-rain', description: 'Light drizzle' };
+        case code >= 56 && code <= 57: // Freezing Drizzle
+          return { icon: 'snowflake', description: 'Freezing drizzle' };
+        case code >= 61 && code <= 65: // Rain
+          return { icon: 'cloud-showers-heavy', description: 'Rain' };
+        case code >= 66 && code <= 67: // Freezing Rain
+          return { icon: 'cloud-meatball', description: 'Freezing rain' };
+        case code >= 71 && code <= 77: // Snow
+          return { icon: 'snowflake', description: 'Snow' };
+        case code >= 80 && code <= 82: // Rain showers
+          return { icon: 'cloud-sun-rain', description: 'Rain showers' };
+        case code >= 85 && code <= 86: // Snow showers
+          return { icon: 'snowflake', description: 'Snow showers' };
+        case code === 95: // Thunderstorm
+          return { icon: 'bolt', description: 'Thunderstorm' };
+        case code >= 96 && code <= 99: // Thunderstorm with hail
+          return { icon: 'cloud-bolt', description: 'Thunderstorm with hail' };
+        default:
+          return { icon: 'cloud', description: 'Unknown conditions' };
+      }
+    }
+    
+    // Generate meaningful weather alerts based on actual conditions
+    function generateWeatherAlert(forecast) {
+      // Check the weather conditions to generate relevant alerts
+      
+      // Check for high winds (above 30 km/h)
+      const highWinds = forecast.some(day => day.windSpeed > 30);
+      
+      // Check for heavy rain (high precipitation probability)
+      const heavyRain = forecast.some(day => day.chanceOfRain > 70);
+      
+      // Check for extreme temperatures
+      const extremeHeat = forecast.some(day => day.tempMax > 30);
+      const extremeCold = forecast.some(day => day.tempMin < 0);
+      
+      // Check for thunderstorms
+      const thunderstorms = forecast.some(day => 
+        day.weatherCode === 95 || 
+        day.weatherCode === 96 || 
+        day.weatherCode === 99
+      );
+      
+      // Check for snow
+      const snow = forecast.some(day => 
+        (day.weatherCode >= 71 && day.weatherCode <= 77) || 
+        (day.weatherCode >= 85 && day.weatherCode <= 86)
+      );
+      
+      // Generate appropriate alert or return null if conditions are good
+      if (thunderstorms) {
+        return {
+          type: 'severe',
+          message: 'Thunderstorms expected. Take shelter if lightning is present.'
+        };
+      } else if (snow) {
+        return {
+          type: 'severe',
+          message: 'Snow expected. Be prepared for cold, slippery conditions.'
+        };
+      } else if (extremeHeat) {
+        return {
+          type: 'warning',
+          message: 'High temperatures expected. Stay hydrated and take breaks in shade.'
+        };
+      } else if (extremeCold) {
+        return {
+          type: 'warning',
+          message: 'Freezing temperatures expected. Dress in warm layers.'
+        };
+      } else if (highWinds) {
+        return {
+          type: 'warning',
+          message: 'Strong winds expected. Be cautious on exposed routes.'
+        };
+      } else if (heavyRain) {
+        return {
+          type: 'warning',
+          message: 'Heavy rainfall possible. Be prepared for wet conditions.'
+        };
+      }
+      
+      // No significant weather concerns
+      return null;
+    }
+    
+    // Function to display weather data in the widget
+    function displayWeatherData(dayId, data) {
+      const widget = document.getElementById(`weather-${dayId}`);
+      if (!widget) return;
+      
+      const content = widget.querySelector('.weather-content');
+      const isHistorical = data.isHistorical;
+      
+      // Format date for display
+      const formatDate = (date) => {
+        const options = { weekday: 'short', month: 'short', day: 'numeric' };
+        return date.toLocaleDateString('en-US', options);
+      };
+      
+      // Build the weather cards HTML
+      let html = '';
+      
+      // If showing historical data, add a header
+      if (isHistorical) {
+        html += `
+          <div style="width: 100%; text-align: center; margin-bottom: 10px; font-weight: bold; color: #2980b9;">
+            Recent Years' Daytime Temperatures
+          </div>
+        `;
+      }
+      
+      data.forecast.forEach(day => {
+        // For historical data, simplify the display to focus on the daytime temperature
+        if (isHistorical) {
+          html += `
+            <div class="weather-day" style="${isHistorical ? 'background-color: #f8f9fa;' : ''}">
+              <div class="weather-date">${formatDate(day.date)}</div>
+              <div class="weather-icon">
+                <i class="fas fa-${day.icon}"></i>
+              </div>
+              <div class="weather-temp" style="font-size: ${isHistorical ? '1.6rem' : '1.4rem'}; color: #e74c3c;">
+                ${day.tempMax}°C
+              </div>
+              <div style="font-size: 0.8rem; margin-bottom: 4px;">
+                Typical Daytime High
+              </div>
+              <div class="weather-desc">${day.description}</div>
+              <div class="weather-details">
+                <div>
+                  <i class="fas fa-wind"></i> ${day.windSpeed} km/h
+                </div>
+                <div>
+                  <i class="fas fa-tint"></i> ${day.chanceOfRain}%
+                </div>
+              </div>
+            </div>
+          `;
+        } else {
+          // Regular forecast display
+          html += `
+            <div class="weather-day">
+              <div class="weather-date">${formatDate(day.date)}</div>
+              <div class="weather-icon">
+                <i class="fas fa-${day.icon}"></i>
+              </div>
+              <div class="weather-temp">${day.temp}°C</div>
+              <div style="font-size: 0.75rem; color: #666; margin-bottom: 4px;">
+                <span style="color: #e74c3c;">${day.tempMax}°</span> / <span style="color: #3498db;">${day.tempMin}°</span>
+              </div>
+              <div class="weather-desc">${day.description}</div>
+              <div class="weather-details">
+                <div>
+                  <i class="fas fa-wind"></i> ${day.windSpeed} km/h
+                </div>
+                <div>
+                  <i class="fas fa-tint"></i> ${day.chanceOfRain}%
+                </div>
+              </div>
+            </div>
+          `;
+        }
+      });
+      
+      // Add any weather alerts
+      if (data.alert) {
+        html += `
+          <div class="weather-alert ${data.alert.type}">
+            <i class="fas fa-exclamation-triangle"></i> 
+            <strong>${data.alert.type === 'severe' ? 'Alert' : 'Warning'}</strong>: ${data.alert.message}
+          </div>
+        `;
+      }
+      
+      // Add the attribution note to the HTML
+      html += `
+        <div style="font-size: 0.75rem; color: #999; text-align: center; margin-top: 12px; width: 100%;">
+          Weather data provided by <a href="https://open-meteo.com/" target="_blank" style="color: #3498db;">Open-Meteo.com</a>
+        </div>
+      `;
+      
+      // Update the widget content with the complete HTML
+      content.innerHTML = html;
+    }
+    
+    // Function to display an error in the weather widget
+    function displayWeatherError(dayId, error) {
+      const widget = document.getElementById(`weather-${dayId}`);
+      if (!widget) return;
+      
+      const content = widget.querySelector('.weather-content');
+      content.innerHTML = `
+        <div class="weather-error">
+          <i class="fas fa-exclamation-circle"></i>
+          ${error.message || 'Unable to load weather data'}
+        </div>
+        <button onclick="refreshWeather('${dayId}')" class="gpx-btn" style="margin-top:15px;">
+          <i class="fas fa-sync-alt"></i> Try Again
+        </button>
+      `;
+    }
+    
+    // Store weather data for each widget
+    const weatherDataCache = {};
+    
+    // Toggle between historical data and current forecast
+    function toggleForecastMode(dayId, mode) {
+      const widget = document.getElementById(`weather-${dayId}`);
+      if (!widget) return;
+      
+      // Save the current mode to the widget
+      widget.dataset.mode = mode;
+      
+      // Update the active state of the toggle buttons
+      const historicalLink = widget.querySelector('.weather-toggle-container a:first-child');
+      const forecastLink = widget.querySelector('.weather-toggle-container a:last-child');
+      
+      if (mode === 'historical') {
+        historicalLink.style.fontWeight = 'bold';
+        forecastLink.style.fontWeight = 'normal';
+        historicalLink.style.textDecoration = 'underline';
+        forecastLink.style.textDecoration = 'none';
+      } else {
+        historicalLink.style.fontWeight = 'normal';
+        forecastLink.style.fontWeight = 'bold';
+        historicalLink.style.textDecoration = 'none';
+        forecastLink.style.textDecoration = 'underline';
+      }
+      
+      // Show loading state
+      const content = widget.querySelector('.weather-content');
+      content.innerHTML = `
+        <div class="weather-loading">
+          <i class="fas fa-spinner"></i> Loading ${mode === 'historical' ? 'historical' : 'forecast'} data...
+        </div>
+      `;
+      
+      // Load the data for the selected mode
+      const lat = widget.dataset.lat;
+      const lon = widget.dataset.lon;
+      const date = widget.dataset.date;
+      
+      // If we're requesting historical data, use the historical API
+      if (mode === 'historical') {
+        fetchHistoricalWeatherData(lat, lon, date)
+          .then(data => {
+            // Cache the data
+            weatherDataCache[`${dayId}-historical`] = data;
+            displayWeatherData(dayId, data);
+          })
+          .catch(error => {
+            displayWeatherError(dayId, error);
+          });
+      } else {
+        // Otherwise load regular forecast/current data
+        fetchWeatherData(lat, lon, date)
+          .then(data => {
+            // Cache the data
+            weatherDataCache[`${dayId}-forecast`] = data;
+            displayWeatherData(dayId, data);
+          })
+          .catch(error => {
+            displayWeatherError(dayId, error);
+          });
+      }
+    }
+    
+    // Fetch historical climate data for a location
+    async function fetchHistoricalWeatherData(lat, lon, date) {
+      try {
+        // Parse the target date to get month and day
+        const targetDate = new Date(date);
+        const month = targetDate.getMonth() + 1; // 1-12
+        const day = targetDate.getDate(); // 1-31
+        
+        // For a cycling event during the day, we'll focus on daytime high temperatures
+        // from the most recent years to provide the most relevant data
+        
+        // Get the same calendar day for the past 3 years (2021, 2022, 2023)
+        const threeYearsData = [];
+        
+        // We'll get data for a 3-day window centered on the target date
+        // for each of the last 3 years
+        for (let year = 2021; year <= 2023; year++) {
+          // Calculate the 3-day window
+          const dayMinus1 = new Date(year, targetDate.getMonth(), targetDate.getDate() - 1);
+          const dayPlus1 = new Date(year, targetDate.getMonth(), targetDate.getDate() + 1);
+          
+          // Format dates for API
+          const formatDateForAPI = (d) => {
+            return `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, '0')}-${d.getDate().toString().padStart(2, '0')}`;
+          };
+          
+          const startDate = formatDateForAPI(dayMinus1);
+          const endDate = formatDateForAPI(dayPlus1);
+          
+          // Request for this year's data
+          const apiUrl = `https://archive-api.open-meteo.com/v1/era5?latitude=${lat}&longitude=${lon}` +
+            `&start_date=${startDate}&end_date=${endDate}` +
+            `&daily=temperature_2m_max,precipitation_sum,windspeed_10m_max` +
+            `&timezone=auto`;
+          
+          console.log(`Historical API URL for ${year}:`, apiUrl);
+          
+          threeYearsData.push(fetch(apiUrl).then(response => {
+            if (!response.ok) {
+              throw new Error(`Weather API error: ${response.status}`);
+            }
+            return response.json();
+          }));
+        }
+        
+        // Wait for all three requests to complete
+        const results = await Promise.all(threeYearsData);
+        console.log('Historical data for 3 years:', results);
+        
+        // Process the data to create a forecast based on recent years' highs
+        return processRecentYearsData(results, targetDate);
+        
+      } catch (error) {
+        console.error('Error fetching historical weather data:', error);
+        throw new Error('Unable to fetch recent years weather data. Please try again later.');
+      }
+    }
+    
+    // Process data from recent years to create a useful cycling forecast
+    function processRecentYearsData(dataArray, targetDate) {
+      try {
+        // Collect all the max temperatures from the 3 years
+        const allMaxTemps = [];
+        const allPrecipitation = [];
+        const allWindSpeeds = [];
+        
+        // Collect data from all three years
+        dataArray.forEach((yearData, yearIndex) => {
+          if (!yearData.daily || !yearData.daily.temperature_2m_max) {
+            console.error(`Invalid data for year ${2021 + yearIndex}:`, yearData);
+            return; // Skip this year
+          }
+          
+          // Add this year's data to our collections
+          yearData.daily.temperature_2m_max.forEach(temp => allMaxTemps.push(temp));
+          
+          if (yearData.daily.precipitation_sum) {
+            yearData.daily.precipitation_sum.forEach(precip => allPrecipitation.push(precip));
+          }
+          
+          if (yearData.daily.windspeed_10m_max) {
+            yearData.daily.windspeed_10m_max.forEach(wind => allWindSpeeds.push(wind));
+          }
+        });
+        
+        console.log('All collected max temperatures:', allMaxTemps);
+        
+        // Calculate the average high temperature (what cyclists will experience)
+        const avgDaytimeTemp = allMaxTemps.length > 0 
+          ? allMaxTemps.reduce((sum, temp) => sum + temp, 0) / allMaxTemps.length 
+          : 20; // Fallback value if no data
+        
+        // Average precipitation and wind
+        const avgPrecipitation = allPrecipitation.length > 0
+          ? allPrecipitation.reduce((sum, val) => sum + val, 0) / allPrecipitation.length
+          : 0;
+          
+        const avgWindSpeed = allWindSpeeds.length > 0
+          ? allWindSpeeds.reduce((sum, val) => sum + val, 0) / allWindSpeeds.length
+          : 10;
+        
+        console.log(`Recent years data: Avg high temp=${avgDaytimeTemp}°C, Precipitation=${avgPrecipitation}mm, Wind=${avgWindSpeed}km/h`);
+        
+        // For min temps, we'll use a reasonable offset from max (not that relevant for daytime cycling)
+        const estimatedMinTemp = Math.max(5, avgDaytimeTemp - 8);
+        
+        // Generate 3-day forecast around the target date (all showing the same average data)
+        const forecast = [];
+        for (let i = -1; i <= 1; i++) {
+          const forecastDate = new Date(targetDate);
+          forecastDate.setDate(forecastDate.getDate() + i);
+          
+          // Determine weather icon based on precipitation
+          let icon, description;
+          if (avgPrecipitation > 5) {
+            icon = 'cloud-rain';
+            description = 'Occasional rain (based on 2021-2023)';
+          } else if (avgPrecipitation > 1) {
+            icon = 'cloud-sun-rain';
+            description = 'Light showers possible (based on 2021-2023)';
+          } else {
+            icon = 'sun';
+            description = 'Typically sunny (based on 2021-2023)';
+          }
+          
+          // Calculate precipitation probability based on historical data
+          const chanceOfRain = avgPrecipitation > 0 ? Math.min(90, Math.round(avgPrecipitation * 15)) : 10;
+          
+          forecast.push({
+            date: forecastDate,
+            temp: Math.round(avgDaytimeTemp), // Use daytime temperature as main temp
+            tempMax: Math.round(avgDaytimeTemp),
+            tempMin: Math.round(estimatedMinTemp),
+            icon: icon,
+            description: description,
+            windSpeed: Math.round(avgWindSpeed),
+            chanceOfRain: chanceOfRain,
+            isHistorical: true
+          });
+        }
+        
+        return {
+          forecast: forecast,
+          isHistorical: true,
+          alert: {
+            type: 'info',
+            message: 'Showing typical daytime temperatures from 2021-2023. Actual conditions will vary.'
+          }
+        };
+      } catch (error) {
+        console.error('Error processing historical data:', error);
+        throw new Error('Could not process historical weather data');
       }
     }
   </script>
