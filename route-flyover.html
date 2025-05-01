@@ -422,7 +422,8 @@
         center: [14.5, 46.05], // Ljubljana, Slovenia
         zoom: 11,
         pitch: 45,
-        bearing: 0
+        bearing: 0,
+        maxPitch: 85 // Allow a higher maximum pitch for better forward visibility
       });
       
       // Global flag to track initialization
@@ -906,10 +907,18 @@
       const zoomLevel = maxZoom + ((Math.log(actualMaxHeight) - Math.log(actualHeight)) / 
                                   (Math.log(actualMaxHeight) - Math.log(actualMinHeight))) * (minZoom - maxZoom);
       
-      // Calculate pitch based on height (more horizontal at low heights)
-      const minPitch = 40; // Even more horizontal at low height
-      const maxPitch = 75; // Less extreme at max height
-      const pitch = minPitch + normalizedSliderValue * (maxPitch - minPitch);
+      // Calculate pitch based on camera height (with consideration for animation speed in future)
+      const minPitch = 30; // More horizontal view (was 40)
+      const maxPitch = 75; // Less extreme at high height
+
+      // Use height factor for base pitch
+      const basePitch = minPitch + normalizedSliderValue * (maxPitch - minPitch);
+
+      // For initial view, we use a moderate speed factor since animation hasn't started
+      const defaultSpeedFactor = 0.5;
+      const inverseFactor = Math.max(0.3, 1 - normalizedSliderValue);
+      const speedPitchReduction = defaultSpeedFactor * 25 * inverseFactor; // Updated to match animation (25 vs 35)
+      const pitch = Math.max(minPitch, basePitch - speedPitchReduction);
       
       // Apply the new view
       map.flyTo({
@@ -1000,10 +1009,55 @@
       currentPoint = beforeIdx;
       currentPointFloat = beforeIdx + fraction;
       
-      // Calculate camera look-ahead distance based on camera height and speed
+      // Calculate camera look-ahead distance based on camera height, speed, and zoom level
       const normalizedHeight = (cameraHeight - 1) / 99;
-      const baseAheadMeters = 30 + normalizedHeight * 70; // More minimum look-ahead (30m instead of 15m)
-      const lookAheadMeters = baseAheadMeters * (1 + animationSpeed * 2); // Increase look-ahead with speed
+      
+      // Adaptive look-ahead: 
+      // 1. At low heights (zoomed in), look much further ahead
+      // 2. At high speeds, look proportionally further ahead
+      // 3. When going uphill, reduce look-ahead to keep rider in view
+      
+      // First, calculate gradient for the upcoming terrain
+      // Look ahead 50m to detect if we're approaching a climb
+      const gradientCheckDistanceKm = (currentRouteDistance + 50) / 1000;
+      const gradientCheckSegment = calculateSegmentForDistance(gradientCheckDistanceKm);
+      
+      // Get elevation at current point and at check point
+      const currentEle = interpolatedPoint.length > 2 ? interpolatedPoint[2] : 0;
+      
+      // Get the elevation at the check point
+      const checkBeforePoint = routeCoordinates[gradientCheckSegment.beforeIdx];
+      const checkAfterPoint = routeCoordinates[gradientCheckSegment.afterIdx];
+      let checkElevation = 0;
+      
+      if (checkBeforePoint.length > 2 && checkAfterPoint.length > 2) {
+        checkElevation = checkBeforePoint[2] + 
+                         (checkAfterPoint[2] - checkBeforePoint[2]) * gradientCheckSegment.fraction;
+      } else if (checkBeforePoint.length > 2) {
+        checkElevation = checkBeforePoint[2];
+      }
+      
+      // Calculate the gradient (as percentage)
+      const elevationDiff = checkElevation - currentEle;
+      const horizontalDist = 50; // meters
+      const upcomingGradient = (elevationDiff / horizontalDist) * 100;
+      
+      // Adjust look-ahead based on gradient: reduce on uphills, increase on downhills
+      let gradientFactor = 1.0;
+      if (upcomingGradient > 4) {
+        // On steep uphills (>4%), reduce look-ahead by up to 40%
+        gradientFactor = Math.max(0.6, 1.0 - (upcomingGradient * 0.05));
+      } else if (upcomingGradient < -2) {
+        // On downhills, slightly increase look-ahead
+        gradientFactor = Math.min(1.2, 1.0 + (Math.abs(upcomingGradient) * 0.02));
+      }
+      
+      const inverseFactor = Math.max(0.3, 1 - normalizedHeight); // Greater effect at low heights
+      const baseAheadMeters = 30 + (70 * inverseFactor); // 30-100m base distance 
+      const speedFactor = 1 + (animationSpeed * animationSpeed * 3); // Moderate quadratic relationship with speed
+      
+      // Apply all factors to determine final look-ahead distance
+      const lookAheadMeters = baseAheadMeters * speedFactor * gradientFactor;
       
       // Calculate camera look-ahead position
       const lookAheadDistanceKm = (currentRouteDistance + lookAheadMeters) / 1000;
@@ -1044,14 +1098,17 @@
       };
       
       // Adjust smoothing factors based on height and speed
-      // Make camera more responsive at higher speeds to prevent rider going off-screen
-      const speedFactor = Math.max(0.5, 1 - animationSpeed); // Less smoothing at high speeds
-      const positionSmoothingFactor = (0.04 - (normalizedHeight * 0.03)) * speedFactor; // Reduced smoothing at high speeds
-      const bearingSmoothingFactor = (0.03 - (normalizedHeight * 0.02)) * speedFactor; // Reduced smoothing at high speeds
+      // Balanced camera responsiveness at higher speeds 
+      const speedResponseBoost = 1 + (animationSpeed * 1.5); // Linear boost at high speeds (reduced from quadratic)
+      const smoothingSpeedFactor = Math.max(0.4, 1 - animationSpeed * 1.2); // Moderate smoothing at high speeds (0.4 vs 0.3)
+      // Increase position responsiveness when zoomed in at high speeds, but more moderately
+      const positionSmoothingBase = 0.045 + (animationSpeed * 0.04); // Linear increase with speed (reduced from quadratic 0.06)
+      const positionSmoothingFactor = (positionSmoothingBase - (normalizedHeight * 0.03)) * speedResponseBoost;
+      const bearingSmoothingFactor = (0.035 - (normalizedHeight * 0.02)) * speedResponseBoost; // Between original and previous values
       
       // Apply additional damping for higher camera positions (makes movement even smoother at height)
       // But reduce damping at high speeds to keep camera more responsive
-      const damping = (normalizedHeight * 0.5 + 0.5) * speedFactor;
+      const damping = (normalizedHeight * 0.5 + 0.5) * smoothingSpeedFactor;
       
       // Smooth position movement with EMA (Exponential Moving Average)
       // Use a weighted blend of previous and target positions
@@ -1100,32 +1157,79 @@
       const zoomLevel = maxZoom + ((Math.log(actualMaxHeight) - Math.log(actualHeight)) / 
                                  (Math.log(actualMaxHeight) - Math.log(actualMinHeight))) * (minZoom - maxZoom);
       
-      // Calculate pitch based on normalized slider value (more horizontal at low heights)
-      const minPitch = 40; // More horizontal view at low height
+      // Calculate pitch based on camera height, speed, AND terrain gradient
+      // At high speeds or low heights, we want a more horizontal view to see further ahead
+      // On uphills, we want an even more horizontal view to keep the rider in view
+      const minPitch = 30; // More horizontal view (was 40)
       const maxPitch = 75; // Less extreme at high height
-      const pitch = minPitch + normalizedSliderValue * (maxPitch - minPitch);
+      
+      // Use height factor for base pitch
+      const basePitch = minPitch + normalizedSliderValue * (maxPitch - minPitch);
+      
+      // Reduce pitch based on speed (more horizontal at high speeds)
+      // This adjustment is stronger at low heights (zoomed in) where we need to see more ahead
+      const speedPitchReduction = animationSpeed * 25 * inverseFactor; // Up to 25 degrees less at max speed
+      
+      // Further adjust pitch based on terrain gradient
+      let gradientPitchAdjustment = 0;
+      if (upcomingGradient > 2) {
+        // On uphills, make the view more horizontal (up to 15 degrees additional reduction)
+        // The steeper the climb, the more horizontal the view
+        gradientPitchAdjustment = Math.min(15, upcomingGradient * 1.5);
+      }
+      
+      // Apply all adjustments, with a guaranteed minimum pitch
+      const pitch = Math.max(minPitch, basePitch - speedPitchReduction - gradientPitchAdjustment);
       
       // Position camera behind the rider
       // This creates a true "following drone" perspective from any height
       let cameraCenter;
       
       // Calculate the distance to position the camera behind rider
-      // Increase minimum distance and adjust based on speed
+      // Increase minimum distance and adjust based on speed and terrain
       // Higher = further back, using normalized slider value for a smooth progression
       const minBehindDistance = 0.0005; // 2.5x increase from original 0.0002
       const maxBehindDistance = 0.0014; // Slightly increased from original 0.0012
-      const behindDistance = minBehindDistance + 
-                             (normalizedSliderValue * (maxBehindDistance - minBehindDistance)) + 
-                             (animationSpeed * 0.0005); // Add speed-based offset
       
-      // Position directly behind by using the opposite of the travel direction
+      // Adjust behind distance based on speed to find the right balance
+      const speedOffset = animationSpeed * 0.0008; // Linear speed offset (reduced from quadratic 0.0012)
+      
+      // Adjust camera distance for terrain - move closer on uphills to keep rider in view
+      let gradientOffset = 0;
+      if (upcomingGradient > 4) {
+        // On steeper uphills, position camera closer to rider
+        // Reduce the behind distance by up to 30% on steep climbs
+        gradientOffset = -0.0004 * Math.min(1, upcomingGradient/10);
+      }
+      
+      const behindDistance = Math.max(0.0003, minBehindDistance + 
+                             (normalizedSliderValue * (maxBehindDistance - minBehindDistance)) + 
+                             speedOffset + gradientOffset); // Combined offset with minimum safeguard
+      
+      // Position behind the rider, but with a slight offset to adjust placement in viewport
+      // Start with the basic angle opposite of travel direction
       const behindAngle = (currentCameraBearing + 180) % 360; // 180 degrees opposite of travel direction
       
-      // Calculate position behind the rider
+      // Calculate a vertical offset amount to ensure rider stays in view 
+      // When going "north" (bearing near 0/360), we need to lower the camera position slightly
+      const bearingNorthness = Math.min(currentCameraBearing, 360 - currentCameraBearing); // 0 when bearing is 0 or 360, increases as bearing moves away
+      const northAdjustment = Math.max(0, 20 - bearingNorthness) / 20; // Scale from 0-1, higher when going north
+      
+      // When traveling north, elevate the camera target slightly to keep rider at bottom of frame
+      const verticalViewportOffset = 0.0004 * northAdjustment;
+      
+      // Calculate position behind the rider with additional offsets
       const behindAngleRad = behindAngle * Math.PI / 180;
+      
+      // Calculate the north-south axis (latitude) offset with adjustment
+      const latOffset = behindDistance * Math.cos(behindAngleRad);
+      
+      // The higher the "northness factor", the greater the vertical viewport adjustment
+      const adjustedLatOffset = latOffset - verticalViewportOffset;
+      
       cameraCenter = {
         lng: currentCameraPos.lng + behindDistance * Math.sin(behindAngleRad),
-        lat: currentCameraPos.lat + behindDistance * Math.cos(behindAngleRad)
+        lat: currentCameraPos.lat + adjustedLatOffset
       };
       
       map.jumpTo({
@@ -1631,10 +1735,18 @@
       const zoomLevel = maxZoom + ((Math.log(actualMaxHeight) - Math.log(actualHeight)) / 
                                (Math.log(actualMaxHeight) - Math.log(actualMinHeight))) * (minZoom - maxZoom);
       
-      // Calculate pitch based on normalized slider value (more horizontal at low heights)
-      const minPitch = 40;
-      const maxPitch = 75;
-      const pitch = minPitch + normalizedSliderValue * (maxPitch - minPitch);
+      // Calculate pitch based on camera height AND speed
+      // At high speeds or low heights, we want a more horizontal view to see further ahead
+      const minPitch = 30; // More horizontal view (was 40)
+      const maxPitch = 75; // Less extreme at high height
+      
+      // Use height factor for base pitch
+      const basePitch = minPitch + normalizedSliderValue * (maxPitch - minPitch);
+      
+      // Reduce pitch based on speed (more horizontal at high speeds)
+      // Use the inverseFactor to make this adjustment stronger at low heights
+      const speedPitchReduction = animationSpeed * 25 * Math.max(0.3, 1 - normalizedSliderValue); // Updated to match animation (25 vs 35) 
+      const pitch = Math.max(minPitch, basePitch - speedPitchReduction);
       
       // Position camera behind the rider - same as in animation
       // Use same formula as in animation for consistency
@@ -1643,11 +1755,26 @@
       const behindDistance = minBehindDistance + 
                            (normalizedSliderValue * (maxBehindDistance - minBehindDistance));
       const behindAngle = (bearing + 180) % 360; // 180 degrees opposite of travel direction
+      
+      // Calculate a vertical offset amount to ensure rider stays in view 
+      // When going "north" (bearing near 0/360), we need to lower the camera position slightly
+      const bearingNorthness = Math.min(bearing, 360 - bearing); // 0 when bearing is 0 or 360, increases as bearing moves away
+      const northAdjustment = Math.max(0, 20 - bearingNorthness) / 20; // Scale from 0-1, higher when going north
+      
+      // When traveling north, elevate the camera target slightly to keep rider at bottom of frame
+      const verticalViewportOffset = 0.0004 * northAdjustment;
+      
       const behindAngleRad = behindAngle * Math.PI / 180;
+      
+      // Calculate the north-south axis (latitude) offset with adjustment
+      const latOffset = behindDistance * Math.cos(behindAngleRad);
+      
+      // The higher the "northness factor", the greater the vertical viewport adjustment
+      const adjustedLatOffset = latOffset - verticalViewportOffset;
       
       const cameraCenter = {
         lng: currentCameraPos.lng + behindDistance * Math.sin(behindAngleRad),
-        lat: currentCameraPos.lat + behindDistance * Math.cos(behindAngleRad)
+        lat: currentCameraPos.lat + adjustedLatOffset
       };
       
       // Use a longer flyTo duration for smoother transitions when using the slider
