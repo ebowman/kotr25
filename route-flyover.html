@@ -341,39 +341,58 @@
     // We've simplified the animation and removed pre-calculation 
     // to reduce potential causes of glitches
     
-    // Function to create a smoothed version of the route with fewer points
-    // This creates a simplified route for camera movement when zoomed out
+    // Function to create a smoothed version of the route with adaptive smoothing
+    // This creates a path that is more smoothed when zoomed out, less when zoomed in
     function createSmoothedRoute(coordinates) {
       // Skip if too few points
       if (coordinates.length <= 10) return [...coordinates];
       
-      // Determine how many points to use based on route length
-      // For very long routes with many points, we'll use more aggressive smoothing
-      const smoothingFactor = Math.max(5, Math.floor(coordinates.length / 200));
+      // Create multiple levels of smoothing for different zoom levels
+      // Level 1: Minimal smoothing (used when zoomed in)
+      // Level 2: Moderate smoothing (used at medium zoom)
+      // Level 3: Maximum smoothing (used when far zoomed out)
       
-      // Create smoothed route with fewer points, but preserve elevation data
+      // Determine base smoothing factor based on route length
+      const baseSmoothing = Math.max(3, Math.floor(coordinates.length / 300));
+      
+      // Create smoothed route with variable smoothing, preserving elevation data
       const smoothed = [];
       
       // Always include the first point
       smoothed.push([...coordinates[0]]);
       
-      // Add interior points at regular intervals
-      for (let i = smoothingFactor; i < coordinates.length - smoothingFactor; i += smoothingFactor) {
-        // For each smoothed point, use a weighted average of surrounding points
-        // This creates a more natural, curved path without sharp angles
+      // Add interior points with adaptive smoothing
+      const skipFactor = Math.max(2, Math.ceil(coordinates.length / 1000)); // Skip more points on very long routes
+      
+      for (let i = skipFactor; i < coordinates.length - skipFactor; i += skipFactor) {
+        // Variable smoothing window based on position in the route
+        // Use wider window in the middle of the route, narrower at endpoints
+        // This creates more natural behavior at route ends
+        const positionFactor = Math.min(
+          i / coordinates.length,
+          (coordinates.length - i) / coordinates.length
+        ) * 4;
         
+        // Window size grows with position factor (larger in middle of route)
+        const windowSize = Math.max(5, Math.round(baseSmoothing * (1 + positionFactor)));
+        
+        // Get weighted average of points in the smoothing window
         let sumLng = 0;
         let sumLat = 0;
         let sumEle = 0;
-        const windowSize = Math.min(5, smoothingFactor);
+        let totalWeight = 0;
         
-        // Average neighboring points (window of 5)
+        // Use Gaussian-like weighting for smoother transitions
         for (let j = i - windowSize; j <= i + windowSize; j++) {
           if (j >= 0 && j < coordinates.length) {
-            // Apply distance-based weighting - closer points have more influence
-            const weight = 1 - Math.abs(i - j) / (windowSize + 1);
+            // Calculate distance-based weight with Gaussian falloff
+            // This creates more natural curves than linear weighting
+            const distFactor = Math.abs(i - j) / windowSize;
+            const weight = Math.exp(-5 * distFactor * distFactor); // Gaussian-like falloff
+            
             sumLng += coordinates[j][0] * weight;
             sumLat += coordinates[j][1] * weight;
+            totalWeight += weight;
             
             // If elevation data exists, smooth it too
             if (coordinates[j].length > 2) {
@@ -382,14 +401,13 @@
           }
         }
         
-        // Normalize by total weight
-        const totalWeight = (windowSize * 2 + 1) * 0.5;
+        // Create the smoothed point with normalized weights
         const smoothPoint = [
           sumLng / totalWeight,
           sumLat / totalWeight
         ];
         
-        // Add elevation if it exists
+        // Add elevation if it exists (slightly smoothed)
         if (coordinates[i].length > 2) {
           smoothPoint.push(sumEle / totalWeight);
         }
@@ -400,7 +418,7 @@
       // Always include the last point
       smoothed.push([...coordinates[coordinates.length - 1]]);
       
-      console.log(`Route smoothed from ${coordinates.length} to ${smoothed.length} points`);
+      console.log(`Route smoothed from ${coordinates.length} to ${smoothed.length} points with adaptive smoothing`);
       return smoothed;
     }
     
@@ -992,18 +1010,18 @@
       const zoomLevel = maxZoom + ((Math.log(actualMaxHeight) - Math.log(actualHeight)) / 
                                   (Math.log(actualMaxHeight) - Math.log(actualMinHeight))) * (minZoom - maxZoom);
       
-      // Calculate pitch based on camera height (with consideration for animation speed in future)
-      const minPitch = 30; // More horizontal view (was 40)
-      const maxPitch = 75; // Less extreme at high height
+      // Calculate pitch based ONLY on camera height
+      // No adjustments for speed or terrain as requested
+      // Same consistent approach as in animation and manual position functions
+      const minPitch = 25; // More horizontal view (was 30)
+      const maxPitch = 70; // Less extreme at high height (was 75)
 
-      // Use height factor for base pitch
-      const basePitch = minPitch + normalizedSliderValue * (maxPitch - minPitch);
-
-      // For initial view, we use a moderate speed factor since animation hasn't started
-      const defaultSpeedFactor = 0.5;
-      const inverseFactor = Math.max(0.3, 1 - normalizedSliderValue);
-      const speedPitchReduction = defaultSpeedFactor * 25 * inverseFactor; // Updated to match animation (25 vs 35)
-      const pitch = Math.max(minPitch, basePitch - speedPitchReduction);
+      // Use the same non-linear curve for pitch as in animation function
+      const pitchCurve = Math.sqrt(normalizedSliderValue);
+      const pitch = minPitch + pitchCurve * (maxPitch - minPitch);
+      
+      // NO adjustment based on speed - keeps consistent angle at all speeds
+      // NO adjustment based on terrain gradient - keeps consistent angle on all terrain
       
       // Apply the new view
       map.flyTo({
@@ -1147,60 +1165,112 @@
       // Calculate camera look-ahead position
       const lookAheadDistanceKm = (currentRouteDistance + lookAheadMeters) / 1000;
       
-      // Determine when to use smoothed route for camera: zoomed out = smoothed, zoomed in = detailed
-      // Use the normalized height as a transition point between smooth and detailed
-      const useSmoothedForCamera = normalizedHeight > 0.5; // When camera is more than halfway up (zoomed out)
+      // CRITICAL DIFFERENCE: The smoothing level is determined by the camera height
+      // We always use the smoothed route for camera positioning, but transition between
+      // levels of smoothing based on zoom level
       
-      // Get the look-ahead segment based on zoom level
-      const lookAheadSegment = calculateSegmentForDistance(lookAheadDistanceKm, useSmoothedForCamera);
+      // ALWAYS use the smooth path for camera when zoomed out, gradually transition
+      // to detailed path when zoomed in
       
-      // Select route coordinates based on zoom level
-      const cameraRouteCoords = useSmoothedForCamera ? smoothedRouteCoordinates : routeCoordinates;
+      // Calculate a continuous blend factor between detailed and smoothed route
+      // 0 = fully detailed (when zoomed all the way in)
+      // 1 = fully smoothed (when zoomed all the way out)
+      // This creates a seamless transition between smoothing levels
+      const smoothingBlend = Math.min(1.0, normalizedHeight * 1.5);
       
-      // Get the points for the look-ahead interpolation
-      const lookBeforePoint = cameraRouteCoords[lookAheadSegment.beforeIdx];
-      const lookAfterPoint = cameraRouteCoords[lookAheadSegment.afterIdx];
+      // Get both the detailed and smoothed route segments
+      const detailedSegment = calculateSegmentForDistance(lookAheadDistanceKm, false);
+      const smoothedSegment = calculateSegmentForDistance(lookAheadDistanceKm, true);
       
-      // Calculate the interpolated look-ahead point
+      // Get the detailed route coordinates
+      const detailedBeforePoint = routeCoordinates[detailedSegment.beforeIdx];
+      const detailedAfterPoint = routeCoordinates[detailedSegment.afterIdx];
+      
+      // Create interpolated detailed look-ahead point
+      const detailedLookAhead = [
+        detailedBeforePoint[0] + (detailedAfterPoint[0] - detailedBeforePoint[0]) * detailedSegment.fraction,
+        detailedBeforePoint[1] + (detailedAfterPoint[1] - detailedBeforePoint[1]) * detailedSegment.fraction
+      ];
+      
+      // Get the smoothed route coordinates
+      const smoothedBeforePoint = smoothedRouteCoordinates[smoothedSegment.beforeIdx];
+      const smoothedAfterPoint = smoothedRouteCoordinates[smoothedSegment.afterIdx];
+      
+      // Create interpolated smoothed look-ahead point
+      const smoothedLookAhead = [
+        smoothedBeforePoint[0] + (smoothedAfterPoint[0] - smoothedBeforePoint[0]) * smoothedSegment.fraction,
+        smoothedBeforePoint[1] + (smoothedAfterPoint[1] - smoothedBeforePoint[1]) * smoothedSegment.fraction
+      ];
+      
+      // Blend between detailed and smoothed look-ahead points based on zoom level
+      // This creates a smooth transition between detailed and smoothed path
       const lookAheadCoord = [
-        lookBeforePoint[0] + (lookAfterPoint[0] - lookBeforePoint[0]) * lookAheadSegment.fraction,
-        lookBeforePoint[1] + (lookAfterPoint[1] - lookBeforePoint[1]) * lookAheadSegment.fraction
+        detailedLookAhead[0] * (1 - smoothingBlend) + smoothedLookAhead[0] * smoothingBlend,
+        detailedLookAhead[1] * (1 - smoothingBlend) + smoothedLookAhead[1] * smoothingBlend
       ];
       
       // Calculate the bearing
       let bearing;
       
-      // Get a point further ahead for better bearing calculation
-      const bearingDistanceKm = (currentRouteDistance + lookAheadMeters + 10) / 1000; // 10m further
-      const bearingSegment = calculateSegmentForDistance(bearingDistanceKm, useSmoothedForCamera);
-      const bearingPoint = cameraRouteCoords[bearingSegment.afterIdx];
+      // MAJOR SIMPLIFICATION: Always calculate bearing directly from rider to look-ahead point
+      // This ensures the camera always follows the rider and doesn't drift off in the wrong direction
+      const riderBearing = calculateBearing(interpolatedPoint, lookAheadCoord);
       
-      if (bearingPoint && bearingPoint.length >= 2) {
-        bearing = calculateBearing(lookAheadCoord, bearingPoint);
-      } else {
-        // Use simple bearing between current segment points as fallback
-        bearing = calculateBearing(lookBeforePoint, lookAfterPoint);
-      }
+      // Start with the rider's direct bearing
+      bearing = riderBearing;
       
-      // If using smoothed route, apply additional bearing smoothing for even more stable camera
-      if (useSmoothedForCamera) {
-        // If we have a previous bearing, blend them for smoother transitions
-        if (typeof prevBearing !== 'undefined') {
-          // Smoothly interpolate bearing (more weight to previous bearing when zoomed far out)
-          const bearingBlend = Math.min(0.8, normalizedHeight * 0.7);
-          bearing = prevBearing * bearingBlend + bearing * (1 - bearingBlend);
+      // Apply minimal temporal smoothing to avoid jitter, but not so much that we get stuck
+      // The key is that we ALWAYS want to be following the rider's general direction
+      if (typeof prevBearing !== 'undefined') {
+        // Use very light temporal smoothing - just enough to reduce jitter
+        // But much less when zoomed in (where precision matters more)
+        const temporalWeight = Math.min(0.3, normalizedHeight * 0.2); // 0-0.3 range based on height
+        bearing = prevBearing * temporalWeight + bearing * (1 - temporalWeight);
+        
+        // VERY IMPORTANT: Handle the case where bearings are near the 0/360 boundary
+        // This prevents the camera from spinning around when crossing north
+        const bearingDiff = Math.abs(bearing - prevBearing);
+        if (bearingDiff > 180) {
+          // If difference is more than 180 degrees, we're crossing the 0/360 boundary
+          // Adjust the bearing to take the shorter path
+          if (bearing > prevBearing) {
+            bearing = bearing - 360;
+          } else {
+            bearing = bearing + 360;
+          }
         }
-        // Store current bearing for next frame
-        prevBearing = bearing;
+        
+        // Safety check: if bearings are too different (> 90 degrees),
+        // prioritize the rider's direction to prevent backwards camera movement
+        const adjustedDiff = Math.abs(bearing - riderBearing);
+        if (adjustedDiff > 90 && adjustedDiff < 270) {
+          // Bearing is too different from rider direction - reset to rider bearing
+          bearing = riderBearing;
+        }
       }
+      
+      // Normalize bearing to 0-360 range
+      bearing = ((bearing % 360) + 360) % 360;
+      
+      // Store current bearing for next frame
+      prevBearing = bearing;
       
       // Set the target bearing based on our calculated bearing
       targetCameraBearing = bearing;
       
-      // Set target position for the camera (this will be smoothly moved towards)
+      // IMPORTANT: Camera target should ALWAYS be based on rider position, not path
+      // Different approach based on zoom level (normalized height):
+      // - When zoomed in: use look-ahead point
+      // - When zoomed out: stay much closer to rider to prevent the camera from losing the rider
+      
+      // Calculate a dynamic blend factor - closer to 0 means stay near rider, closer to 1 means use lookahead
+      // The key insight is that we need to stay much closer to the rider when zoomed out
+      const riderAnchorFactor = Math.min(0.9, Math.max(0.1, normalizedHeight * 0.7)); // 0.1-0.9 range
+      
+      // Blend between rider position and lookahead (more weight to rider when zoomed out)
       targetCameraPos = {
-        lng: lookAheadCoord[0],
-        lat: lookAheadCoord[1]
+        lng: interpolatedPoint[0] * (1 - riderAnchorFactor) + lookAheadCoord[0] * riderAnchorFactor,
+        lat: interpolatedPoint[1] * (1 - riderAnchorFactor) + lookAheadCoord[1] * riderAnchorFactor
       };
       
       // Adjust smoothing factors based on height and speed
@@ -1226,13 +1296,22 @@
       if (bearingDiff > 180) bearingDiff -= 360;
       if (bearingDiff < -180) bearingDiff += 360;
       
-      // Apply smoothing with damping
-      const effectivePositionSmoothing = positionSmoothingFactor * damping;
-      const effectiveBearingSmoothing = bearingSmoothingFactor * damping;
+      // Apply smoothing with damping, but make it more responsive at high zoom levels
+      // This is critical when zoomed out to keep the rider in frame
+      const zoomBasedResponsiveness = Math.min(3.0, 1.0 + normalizedHeight * 4.0); // 1.0-3.0x responsiveness based on zoom
+      const effectivePositionSmoothing = positionSmoothingFactor * damping * zoomBasedResponsiveness;
+      const effectiveBearingSmoothing = bearingSmoothingFactor * damping * zoomBasedResponsiveness;
       
       // Smooth camera position movement with interpolation
-      currentCameraPos.lng += (targetCameraPos.lng - currentCameraPos.lng) * effectivePositionSmoothing;
-      currentCameraPos.lat += (targetCameraPos.lat - currentCameraPos.lat) * effectivePositionSmoothing;
+      // Use minimum threshold to ensure camera always keeps up with very fast movement when zoomed out
+      const minPositionSmoothingAtMaxZoom = 0.15; // Ensures camera always moves at least 15% of the way to target per frame
+      const actualPositionSmoothing = Math.max(
+        minPositionSmoothingAtMaxZoom * normalizedHeight, 
+        effectivePositionSmoothing
+      );
+      
+      currentCameraPos.lng += (targetCameraPos.lng - currentCameraPos.lng) * actualPositionSmoothing;
+      currentCameraPos.lat += (targetCameraPos.lat - currentCameraPos.lat) * actualPositionSmoothing;
       currentCameraBearing += bearingDiff * effectiveBearingSmoothing;
       
       // Normalize bearing to [0, 360) range
@@ -1263,29 +1342,23 @@
       const zoomLevel = maxZoom + ((Math.log(actualMaxHeight) - Math.log(actualHeight)) / 
                                  (Math.log(actualMaxHeight) - Math.log(actualMinHeight))) * (minZoom - maxZoom);
       
-      // Calculate pitch based on camera height, speed, AND terrain gradient
-      // At high speeds or low heights, we want a more horizontal view to see further ahead
-      // On uphills, we want an even more horizontal view to keep the rider in view
-      const minPitch = 30; // More horizontal view (was 40)
-      const maxPitch = 75; // Less extreme at high height
+      // Calculate pitch based ONLY on camera height
+      // No adjustments for speed or terrain as requested
+      // More horizontal when zoomed in, more overhead when zoomed out
       
-      // Use height factor for base pitch
-      const basePitch = minPitch + normalizedSliderValue * (maxPitch - minPitch);
+      // Adjust these values to make the view more horizontal overall
+      const minPitch = 25; // More horizontal view at minimum (was 30)
+      const maxPitch = 70; // Less extreme at maximum height (was 75)
       
-      // Reduce pitch based on speed (more horizontal at high speeds)
-      // This adjustment is stronger at low heights (zoomed in) where we need to see more ahead
-      const speedPitchReduction = animationSpeed * 25 * inverseFactor; // Up to 25 degrees less at max speed
+      // Use height factor for base pitch, but with a curve that favors horizontal views
+      // This makes the transition more weighted toward horizontal views
+      // Square root creates a curve that stays more horizontal until higher zoom levels
+      const pitchCurve = Math.sqrt(normalizedSliderValue); // Non-linear curve for better low-height visibility
+      const pitch = minPitch + pitchCurve * (maxPitch - minPitch);
       
-      // Further adjust pitch based on terrain gradient
-      let gradientPitchAdjustment = 0;
-      if (upcomingGradient > 2) {
-        // On uphills, make the view more horizontal (up to 15 degrees additional reduction)
-        // The steeper the climb, the more horizontal the view
-        gradientPitchAdjustment = Math.min(15, upcomingGradient * 1.5);
-      }
-      
-      // Apply all adjustments, with a guaranteed minimum pitch
-      const pitch = Math.max(minPitch, basePitch - speedPitchReduction - gradientPitchAdjustment);
+      // NO adjustment based on speed - keeps consistent angle at all speeds
+      // NO adjustment based on terrain gradient - keeps consistent angle on all terrain
+      // Simply use the height-based pitch directly
       
       // Position camera behind the rider
       // This creates a true "following drone" perspective from any height
@@ -1297,8 +1370,12 @@
       const minBehindDistance = 0.0005; // 2.5x increase from original 0.0002
       const maxBehindDistance = 0.0014; // Slightly increased from original 0.0012
       
+      // For zoomed-out views, we need to position the camera relatively closer
+      // to ensure the rider remains prominently in view
+      const zoomFactor = Math.max(0.5, 1.0 - normalizedHeight * 0.5); // 0.5-1.0 range (smaller at high zoom)
+      
       // Adjust behind distance based on speed to find the right balance
-      const speedOffset = animationSpeed * 0.0008; // Linear speed offset (reduced from quadratic 0.0012)
+      const speedOffset = animationSpeed * 0.0008 * zoomFactor; // Reduced effect at high zoom levels
       
       // Adjust camera distance for terrain - move closer on uphills to keep rider in view
       let gradientOffset = 0;
@@ -1308,9 +1385,12 @@
         gradientOffset = -0.0004 * Math.min(1, upcomingGradient/10);
       }
       
-      const behindDistance = Math.max(0.0003, minBehindDistance + 
-                             (normalizedSliderValue * (maxBehindDistance - minBehindDistance)) + 
-                             speedOffset + gradientOffset); // Combined offset with minimum safeguard
+      // Calculate basic distance based on zoom level
+      const zoomBasedDistance = minBehindDistance + 
+                               (normalizedSliderValue * (maxBehindDistance - minBehindDistance) * zoomFactor);
+      
+      // Apply all adjustments with minimum safeguard
+      const behindDistance = Math.max(0.0003, zoomBasedDistance + speedOffset + gradientOffset);
       
       // Position behind the rider, but with a slight offset to adjust placement in viewport
       // Start with the basic angle opposite of travel direction
@@ -1726,15 +1806,7 @@
       const beforePoint = routeCoordinates[beforeIdx];
       const afterPoint = routeCoordinates[afterIdx];
       
-      // Calculate interpolation fraction based on distance
-      const segmentLength = routeDistances[afterIdx] - routeDistances[beforeIdx];
-      let fraction = 0;
-      
-      if (segmentLength > 0) {
-        fraction = (currentDistanceKm - routeDistances[beforeIdx]) / segmentLength;
-        // Clamp to valid range
-        fraction = Math.max(0, Math.min(1, fraction));
-      }
+      // We'll use the fraction from the segment we got above, no need to recalculate
       
       // Create interpolated point
       const interpolatedPoint = [
@@ -1770,54 +1842,91 @@
       // Calculate target position for camera based on current position + look-ahead distance
       const lookAheadDistanceKm = (currentRouteDistance + lookAheadMeters) / 1000;
       
-      // Get the camera path segment - use smoothed route when zoomed out
-      const lookAheadSegment = calculateSegmentForDistance(lookAheadDistanceKm, useSmoothedForCamera);
+      // Just like in the animation function, use a blend of detailed and smoothed paths
+      // for camera positioning that depends on the zoom level
+      const smoothingBlend = Math.min(1.0, normalizedHeight * 1.5);
       
-      // Choose route array based on zoom level
-      const cameraRouteCoords = useSmoothedForCamera ? smoothedRouteCoordinates : routeCoordinates;
+      // Get both the detailed and smoothed route segments
+      const detailedSegment = calculateSegmentForDistance(lookAheadDistanceKm, false);
+      const smoothedSegment = calculateSegmentForDistance(lookAheadDistanceKm, true);
       
-      // Get the points to interpolate between for camera path
-      const lookBeforePoint = cameraRouteCoords[lookAheadSegment.beforeIdx];
-      const lookAfterPoint = cameraRouteCoords[lookAheadSegment.afterIdx];
+      // Get the detailed route coordinates
+      const detailedBeforePoint = routeCoordinates[detailedSegment.beforeIdx];
+      const detailedAfterPoint = routeCoordinates[detailedSegment.afterIdx];
       
-      // Create interpolated look-ahead point
-      const lookAheadCoord = [
-        lookBeforePoint[0] + (lookAfterPoint[0] - lookBeforePoint[0]) * lookAheadSegment.fraction,
-        lookBeforePoint[1] + (lookAfterPoint[1] - lookBeforePoint[1]) * lookAheadSegment.fraction
+      // Create interpolated detailed look-ahead point
+      const detailedLookAhead = [
+        detailedBeforePoint[0] + (detailedAfterPoint[0] - detailedBeforePoint[0]) * detailedSegment.fraction,
+        detailedBeforePoint[1] + (detailedAfterPoint[1] - detailedBeforePoint[1]) * detailedSegment.fraction
       ];
       
-      // Calculate bearing to next segment
-      let bearing = 0;
-      // Get lookahead segment based on smoothed/detailed choice
-      const lookAheadCameraSegment = calculateSegmentForDistance(lookAheadDistanceKm, useSmoothedForCamera);
-      const lookAfterCameraIdx = lookAheadCameraSegment.afterIdx;
+      // Get the smoothed route coordinates
+      const smoothedBeforePoint = smoothedRouteCoordinates[smoothedSegment.beforeIdx];
+      const smoothedAfterPoint = smoothedRouteCoordinates[smoothedSegment.afterIdx];
       
-      if (lookAfterCameraIdx < cameraRouteCoords.length - 1) {
-        // Use the bearing toward the next segment
-        const nextPoint = cameraRouteCoords[lookAfterCameraIdx + 1];
-        bearing = calculateBearing(lookAheadCoord, nextPoint);
-      } else if (beforeIdx > 0) {
-        // Near the end, use the bearing from the previous segment
-        const prevPoint = routeCoordinates[beforeIdx - 1];
-        bearing = calculateBearing(prevPoint, interpolatedPoint);
+      // Create interpolated smoothed look-ahead point
+      const smoothedLookAhead = [
+        smoothedBeforePoint[0] + (smoothedAfterPoint[0] - smoothedBeforePoint[0]) * smoothedSegment.fraction,
+        smoothedBeforePoint[1] + (smoothedAfterPoint[1] - smoothedBeforePoint[1]) * smoothedSegment.fraction
+      ];
+      
+      // Blend between detailed and smoothed paths based on zoom level
+      const lookAheadCoord = [
+        detailedLookAhead[0] * (1 - smoothingBlend) + smoothedLookAhead[0] * smoothingBlend,
+        detailedLookAhead[1] * (1 - smoothingBlend) + smoothedLookAhead[1] * smoothingBlend
+      ];
+      
+      // SIMPLIFIED: Always calculate bearing directly from rider to look-ahead point
+      // This matches the animation logic and prevents camera from drifting in wrong direction
+      const riderBearing = calculateBearing(interpolatedPoint, lookAheadCoord);
+      
+      // Start with the rider's direct bearing
+      bearing = riderBearing;
+      
+      // Apply minimal temporal smoothing, consistent with the animation function
+      if (typeof prevBearing !== 'undefined') {
+        // Use light temporal smoothing - just enough to reduce jitter
+        const temporalWeight = Math.min(0.3, normalizedHeight * 0.2); // 0-0.3 range based on height
+        bearing = prevBearing * temporalWeight + bearing * (1 - temporalWeight);
+        
+        // Handle the case where bearings are near the 0/360 boundary
+        const bearingDiff = Math.abs(bearing - prevBearing);
+        if (bearingDiff > 180) {
+          // Adjust bearing to take the shorter path across the boundary
+          if (bearing > prevBearing) {
+            bearing = bearing - 360;
+          } else {
+            bearing = bearing + 360;
+          }
+        }
+        
+        // Safety check: if bearings are too different (> 90 degrees),
+        // prioritize the rider's direction
+        const adjustedDiff = Math.abs(bearing - riderBearing);
+        if (adjustedDiff > 90 && adjustedDiff < 270) {
+          bearing = riderBearing;
+        }
       }
       
-      // Apply additional bearing smoothing for zoomed out
-      if (useSmoothedForCamera && typeof prevBearing !== 'undefined') {
-        // Blend with previous bearing for smoother transitions when zoomed out
-        const bearingBlend = Math.min(0.8, normalizedHeight * 0.7);
-        bearing = prevBearing * bearingBlend + bearing * (1 - bearingBlend);
-      }
-      prevBearing = bearing; // Store for next use
+      // Normalize bearing to 0-360 range
+      bearing = ((bearing % 360) + 360) % 360;
       
-      // Update the camera tracking values to maintain camera continuity when animation resumes
+      // Store for next use
+      prevBearing = bearing;
+      
+      // Use the same approach as animation function: blend between rider and lookahead 
+      // Stay closer to rider when zoomed out to prevent camera from losing rider
+      const riderAnchorFactor = Math.min(0.9, Math.max(0.1, normalizedHeight * 0.7)); // 0.1-0.9 range
+      
+      // Blend between rider position and lookahead (more weight to rider when zoomed out)
       currentCameraPos = { 
-        lng: lookAheadCoord[0], 
-        lat: lookAheadCoord[1] 
+        lng: interpolatedPoint[0] * (1 - riderAnchorFactor) + lookAheadCoord[0] * riderAnchorFactor,
+        lat: interpolatedPoint[1] * (1 - riderAnchorFactor) + lookAheadCoord[1] * riderAnchorFactor
       };
+      // Target should match current position for consistent animation resumption
       targetCameraPos = { 
-        lng: lookAheadCoord[0], 
-        lat: lookAheadCoord[1] 
+        lng: currentCameraPos.lng, 
+        lat: currentCameraPos.lat
       };
       currentCameraBearing = bearing;
       targetCameraBearing = bearing;
@@ -1840,25 +1949,39 @@
       const zoomLevel = maxZoom + ((Math.log(actualMaxHeight) - Math.log(actualHeight)) / 
                                (Math.log(actualMaxHeight) - Math.log(actualMinHeight))) * (minZoom - maxZoom);
       
-      // Calculate pitch based on camera height AND speed
-      // At high speeds or low heights, we want a more horizontal view to see further ahead
-      const minPitch = 30; // More horizontal view (was 40)
-      const maxPitch = 75; // Less extreme at high height
+      // Calculate pitch based ONLY on camera height
+      // No adjustments for speed or terrain as requested
+      // Matches the approach used in the animation function
       
-      // Use height factor for base pitch
-      const basePitch = minPitch + normalizedSliderValue * (maxPitch - minPitch);
+      // Same values as in animation function
+      const minPitch = 25; // More horizontal view (was 30)
+      const maxPitch = 70; // Less extreme at high height (was 75)
       
-      // Reduce pitch based on speed (more horizontal at high speeds)
-      // Use the inverseFactor to make this adjustment stronger at low heights
-      const speedPitchReduction = animationSpeed * 25 * Math.max(0.3, 1 - normalizedSliderValue); // Updated to match animation (25 vs 35) 
-      const pitch = Math.max(minPitch, basePitch - speedPitchReduction);
+      // Use the same non-linear curve for pitch as in animation function
+      const pitchCurve = Math.sqrt(normalizedSliderValue);
+      const pitch = minPitch + pitchCurve * (maxPitch - minPitch);
+      
+      // NO adjustment based on speed - keeps consistent angle at all speeds
+      // NO adjustment based on terrain gradient - keeps consistent angle on all terrain
       
       // Position camera behind the rider - same as in animation
       // Use same formula as in animation for consistency
       const minBehindDistance = 0.0005;
       const maxBehindDistance = 0.0014;
-      const behindDistance = minBehindDistance + 
-                           (normalizedSliderValue * (maxBehindDistance - minBehindDistance));
+      
+      // For zoomed-out views, we need to position the camera relatively closer
+      // to ensure the rider remains prominently in view
+      const zoomFactor = Math.max(0.5, 1.0 - normalizedHeight * 0.5); // 0.5-1.0 range (smaller at high zoom)
+      
+      // Calculate basic distance based on zoom level
+      const zoomBasedDistance = minBehindDistance + 
+                              (normalizedSliderValue * (maxBehindDistance - minBehindDistance) * zoomFactor);
+      
+      // Apply speed offset with zoom adjustment                    
+      const speedOffset = animationSpeed * 0.0008 * zoomFactor;
+      
+      // Final behind distance with minimum safeguard
+      const behindDistance = Math.max(0.0003, zoomBasedDistance + speedOffset);
       const behindAngle = (bearing + 180) % 360; // 180 degrees opposite of travel direction
       
       // Calculate a vertical offset amount to ensure rider stays in view 
