@@ -896,7 +896,7 @@
     // Add variable to track fractional position 
     let currentPointFloat = 0;
     
-    // Animate route
+    // Simple, direct route animation with no pre-calculation
     function animateRoute() {
       // Safety check to avoid errors if route data isn't loaded
       if (!routeCoordinates || routeCoordinates.length === 0 || !routeDistances || routeDistances.length === 0) {
@@ -932,317 +932,71 @@
       // Update current distance along route
       currentRouteDistance += distanceIncrement;
       
-      // Use pre-calculated data if available, otherwise calculate on-the-fly
-      let interpolatedPoint, beforeIdx, afterIdx, fraction, lookAheadCoord, bearing;
+      // Simple direction calculation with no pre-calculation or optimization
+      // This simpler approach may eliminate glitches caused by complex logic
       
-      // Early return for start of route
-      if (currentRouteDistance <= 0) {
-        interpolatedPoint = routeCoordinates[0];
-        beforeIdx = 0;
-        afterIdx = 0;
-        fraction = 0;
-        currentPoint = 0;
-        currentPointFloat = 0;
-      } 
-      // Handle end of route
-      else if (currentRouteDistance >= routeDistances[routeDistances.length - 1] * 1000) {
-        interpolatedPoint = routeCoordinates[routeCoordinates.length - 1];
-        beforeIdx = routeCoordinates.length - 1;
-        afterIdx = routeCoordinates.length - 1;
-        fraction = 0;
-        currentPoint = routeCoordinates.length - 1;
-        currentPointFloat = routeCoordinates.length - 1;
-      }
-      // Normal case - find using pre-calculated data when possible
-      else {
-        // Check if we need to re-calculate due to camera height changes
-        if (Math.abs(cameraHeight - lastPreCalcHeight) > 10) {
-          // Wait until animation loop to avoid frame drop
-          setTimeout(() => preCalculateRouteData(), 0);
-        }
-        
-        // Use pre-calculated data from our optimized object map
-        if (preCalculatedSegments && Object.keys(preCalculatedSegments).length > 0) {
-          // Round to the nearest step size
-          const roundedDistance = Math.round(currentRouteDistance / stepSize) * stepSize;
-          
-          // Direct lookup by key - extremely fast, no search needed
-          const segment = preCalculatedSegments[roundedDistance];
-          
-          if (segment) {
-            // We have exact pre-calculated data for this distance
-            beforeIdx = segment.beforeIdx;
-            afterIdx = segment.afterIdx;
-            fraction = segment.fraction;
-            
-            // Calculate the interpolated point on-demand (saves memory)
-            const beforePoint = routeCoordinates[beforeIdx];
-            const afterPoint = routeCoordinates[afterIdx];
-            
-            interpolatedPoint = [
-              beforePoint[0] + (afterPoint[0] - beforePoint[0]) * fraction,
-              beforePoint[1] + (afterPoint[1] - beforePoint[1]) * fraction
-            ];
-            
-            // Include elevation if available
-            if (beforePoint.length > 2 && afterPoint.length > 2) {
-              interpolatedPoint[2] = beforePoint[2] + (afterPoint[2] - beforePoint[2]) * fraction;
-            }
-          } else {
-            // If exact distance not found, interpolate between nearby pre-calculated points
-            // Find the two closest pre-calculated distances
-            const distances = Object.keys(preCalculatedSegments).map(Number);
-            let prevDistance = 0;
-            let nextDistance = totalDistanceMeters;
-            
-            for (const d of distances) {
-              if (d <= roundedDistance && d > prevDistance) {
-                prevDistance = d;
-              }
-              if (d >= roundedDistance && d < nextDistance) {
-                nextDistance = d;
-              }
-            }
-            
-            // Simple linear interpolation between points
-            if (prevDistance > 0 && nextDistance < totalDistanceMeters) {
-              const prevSegment = preCalculatedSegments[prevDistance];
-              const nextSegment = preCalculatedSegments[nextDistance];
-              
-              // Interpolate between segments
-              const segmentFraction = (roundedDistance - prevDistance) / (nextDistance - prevDistance);
-              
-              // Interpolate between the GPX points from both segments
-              const prevPoint = routeCoordinates[prevSegment.beforeIdx];
-              const nextPoint = routeCoordinates[nextSegment.afterIdx];
-              
-              interpolatedPoint = [
-                prevPoint[0] + (nextPoint[0] - prevPoint[0]) * segmentFraction,
-                prevPoint[1] + (nextPoint[1] - prevPoint[1]) * segmentFraction
-              ];
-              
-              if (prevPoint.length > 2 && nextPoint.length > 2) {
-                interpolatedPoint[2] = prevPoint[2] + (nextPoint[2] - prevPoint[2]) * segmentFraction;
-              }
-              
-              beforeIdx = prevSegment.beforeIdx;
-              afterIdx = nextSegment.afterIdx;
-              fraction = segmentFraction;
-            } else {
-              // Fallback to calculation on-the-fly if interpolation not possible
-              // This should rarely happen with properly pre-calculated data
-              // Use the fallback calculation if needed
-              const distanceKm = currentRouteDistance / 1000;
-              const segment = calculateSegmentForDistance(distanceKm);
-              beforeIdx = segment.beforeIdx;
-              afterIdx = segment.afterIdx;
-              fraction = segment.fraction;
-              
-              const beforePoint = routeCoordinates[beforeIdx];
-              const afterPoint = routeCoordinates[afterIdx];
-              
-              interpolatedPoint = [
-                beforePoint[0] + (afterPoint[0] - beforePoint[0]) * fraction,
-                beforePoint[1] + (afterPoint[1] - beforePoint[1]) * fraction
-              ];
-              
-              if (beforePoint.length > 2 && afterPoint.length > 2) {
-                interpolatedPoint[2] = beforePoint[2] + (afterPoint[2] - beforePoint[2]) * fraction;
-              }
-            }
-          }
-          
-          // Update current point tracking for camera logic
-          currentPoint = beforeIdx;
-          currentPointFloat = beforeIdx + fraction;
-        }
-        else {
-          // Fallback to calculating on-the-fly if pre-calculation isn't ready
-          
-          // Convert current distance to km for comparison with routeDistances
-          const currentDistanceKm = currentRouteDistance / 1000;
-          
-          // Find the two points we're between
-          beforeIdx = 0;
-          afterIdx = 1;
-          
-          for (let i = 1; i < routeDistances.length; i++) {
-            if (routeDistances[i] >= currentDistanceKm) {
-              afterIdx = i;
-              beforeIdx = i - 1;
-              break;
-            }
-          }
-          
-          // Get the two points
-          const beforePoint = routeCoordinates[beforeIdx];
-          const afterPoint = routeCoordinates[afterIdx];
-          
-          // Safety check for valid coordinates
-          if (!beforePoint || beforePoint.length < 2 || !afterPoint || afterPoint.length < 2) {
-            console.warn('Invalid coordinates at indices', beforeIdx, afterIdx);
-            stopAnimation();
-            return;
-          }
-          
-          // Calculate interpolation fraction based on distance
-          const segmentLength = routeDistances[afterIdx] - routeDistances[beforeIdx];
-          fraction = 0;
-          
-          if (segmentLength > 0) {
-            fraction = (currentDistanceKm - routeDistances[beforeIdx]) / segmentLength;
-          }
-          
-          // Create interpolated point
-          interpolatedPoint = [
-            beforePoint[0] + (afterPoint[0] - beforePoint[0]) * fraction,
-            beforePoint[1] + (afterPoint[1] - beforePoint[1]) * fraction
-          ];
-          
-          // Include elevation if available
-          if (beforePoint.length > 2 && afterPoint.length > 2) {
-            interpolatedPoint[2] = beforePoint[2] + (afterPoint[2] - beforePoint[2]) * fraction;
-          }
-          
-          // Update current point tracking for camera logic
-          currentPoint = beforeIdx;
-          currentPointFloat = beforeIdx + fraction;
-        }
+      // Convert to km for route lookup
+      const currentDistanceKm = currentRouteDistance / 1000;
+      
+      // Find the segment for the current position
+      const segment = calculateSegmentForDistance(currentDistanceKm);
+      const beforeIdx = segment.beforeIdx;
+      const afterIdx = segment.afterIdx;
+      const fraction = segment.fraction;
+      
+      // Get the points for interpolation
+      const beforePoint = routeCoordinates[beforeIdx];
+      const afterPoint = routeCoordinates[afterIdx];
+      
+      // Create interpolated point for the rider position
+      const interpolatedPoint = [
+        beforePoint[0] + (afterPoint[0] - beforePoint[0]) * fraction,
+        beforePoint[1] + (afterPoint[1] - beforePoint[1]) * fraction
+      ];
+      
+      // Include elevation if available
+      if (beforePoint.length > 2 && afterPoint.length > 2) {
+        interpolatedPoint[2] = beforePoint[2] + (afterPoint[2] - beforePoint[2]) * fraction;
       }
       
-      // Update position now that we have the interpolated point
+      // Update position
       updatePointPosition(interpolatedPoint);
       
-      // Calculate normalized height for look-ahead distance
-      const normalizedHeight = (cameraHeight - 1) / 99; // 0 to 1 range
+      // Update tracking information
+      currentPoint = beforeIdx;
+      currentPointFloat = beforeIdx + fraction;
       
-      // Look-ahead distance in meters - shorter at lower heights
+      // Calculate camera look-ahead distance based on camera height
+      const normalizedHeight = (cameraHeight - 1) / 99;
       const lookAheadMeters = 15 + normalizedHeight * 85;
       
-      // Use efficient object-map based look-ahead data with direct key lookup
-      // Round to the nearest interval to avoid any search operations
-      const roundedLookAheadDistance = Math.round((currentRouteDistance + lookAheadMeters) / lookAheadInterval) * lookAheadInterval;
+      // Calculate camera look-ahead position
+      const lookAheadDistanceKm = (currentRouteDistance + lookAheadMeters) / 1000;
+      const lookAheadSegment = calculateSegmentForDistance(lookAheadDistanceKm);
       
-      // Direct key lookup - this is extremely fast with no search needed
-      const lookAheadData = preCalculatedLookAhead[roundedLookAheadDistance];
+      // Get the points for the look-ahead interpolation
+      const lookBeforePoint = routeCoordinates[lookAheadSegment.beforeIdx];
+      const lookAfterPoint = routeCoordinates[lookAheadSegment.afterIdx];
       
-      if (lookAheadData) {
-        // We have pre-calculated data for this exact interval
-        lookAheadCoord = lookAheadData.point;
-        bearing = lookAheadData.bearing;
-        lastLookAheadIndex = beforeIdx;
-      } 
-      else {
-        // If we don't have the exact interval, interpolate between neighboring intervals
-        // Find the two closest intervals
-        const exactLookAheadDistance = currentRouteDistance + lookAheadMeters;
-        const intervals = Object.keys(preCalculatedLookAhead).map(Number).sort((a, b) => a - b);
-        
-        if (intervals.length >= 2) {
-          // Find the two intervals that surround our target distance
-          let prevInterval = 0;
-          let nextInterval = totalDistanceMeters;
-          
-          for (const interval of intervals) {
-            if (interval <= exactLookAheadDistance && interval > prevInterval) {
-              prevInterval = interval;
-            }
-            if (interval >= exactLookAheadDistance && interval < nextInterval) {
-              nextInterval = interval;
-            }
-          }
-          
-          if (prevInterval > 0 && nextInterval < totalDistanceMeters &&
-              preCalculatedLookAhead[prevInterval] && preCalculatedLookAhead[nextInterval]) {
-            // We have data for both surrounding intervals
-            const intervalFraction = (exactLookAheadDistance - prevInterval) / (nextInterval - prevInterval);
-            
-            // Get the pre-calculated data
-            const prevLookAhead = preCalculatedLookAhead[prevInterval];
-            const nextLookAhead = preCalculatedLookAhead[nextInterval];
-            
-            // Interpolate position
-            lookAheadCoord = [
-              prevLookAhead.point[0] + (nextLookAhead.point[0] - prevLookAhead.point[0]) * intervalFraction,
-              prevLookAhead.point[1] + (nextLookAhead.point[1] - prevLookAhead.point[1]) * intervalFraction
-            ];
-            
-            // Interpolate bearing carefully to handle the 0°/360° boundary
-            let bearingDiff = nextLookAhead.bearing - prevLookAhead.bearing;
-            if (bearingDiff > 180) bearingDiff -= 360;
-            if (bearingDiff < -180) bearingDiff += 360;
-            
-            bearing = (prevLookAhead.bearing + bearingDiff * intervalFraction + 360) % 360;
-            lastLookAheadIndex = beforeIdx;
-          }
-          else if (preCalculatedLookAhead[prevInterval]) {
-            // Just use the previous interval data
-            lookAheadCoord = preCalculatedLookAhead[prevInterval].point;
-            bearing = preCalculatedLookAhead[prevInterval].bearing;
-            lastLookAheadIndex = beforeIdx;
-          }
-          else if (preCalculatedLookAhead[nextInterval]) {
-            // Just use the next interval data
-            lookAheadCoord = preCalculatedLookAhead[nextInterval].point;
-            bearing = preCalculatedLookAhead[nextInterval].bearing;
-            lastLookAheadIndex = beforeIdx;
-          }
-          else {
-            // Complete fallback to on-the-fly calculation
-            // For this edge case, use the helper function to calculate the segment
-            const lookAheadDistanceKm = (currentRouteDistance + lookAheadMeters) / 1000;
-            const segment = calculateSegmentForDistance(lookAheadDistanceKm);
-            
-            // Get the two points that bound our look-ahead distance
-            const lookBeforePoint = routeCoordinates[segment.beforeIdx];
-            const lookAfterPoint = routeCoordinates[segment.afterIdx];
-            
-            // Safety check for valid coordinates
-            if (!lookBeforePoint || lookBeforePoint.length < 2 || !lookAfterPoint || lookAfterPoint.length < 2) {
-              console.warn('Invalid look-ahead coordinates');
-              bearing = targetCameraBearing;
-              lookAheadCoord = [routeCoordinates[currentPoint][0], routeCoordinates[currentPoint][1]];
-            } else {
-              // Create interpolated look-ahead point
-              lookAheadCoord = [
-                lookBeforePoint[0] + (lookAfterPoint[0] - lookBeforePoint[0]) * segment.fraction,
-                lookBeforePoint[1] + (lookAfterPoint[1] - lookBeforePoint[1]) * segment.fraction
-              ];
-              
-              // Calculate bearing
-              if (segment.afterIdx < routeCoordinates.length - 1) {
-                const nextPoint = routeCoordinates[segment.afterIdx + 1];
-                bearing = calculateBearing(lookAheadCoord, nextPoint);
-              } else if (segment.beforeIdx > 0) {
-                const prevPoint = routeCoordinates[segment.beforeIdx - 1];
-                bearing = calculateBearing(prevPoint, lookAheadCoord);
-              } else {
-                bearing = targetCameraBearing; // Fallback
-              }
-            }
-            
-            // For tracking purposes
-            lastLookAheadIndex = segment.beforeIdx;
-          }
-        } else {
-          // Fallback if no pre-calculated data at all
-          // This should only happen during initial calculation
-          const lookAheadDistanceKm = (currentRouteDistance + lookAheadMeters) / 1000;
-          const segment = calculateSegmentForDistance(lookAheadDistanceKm);
-          
-          const lookBeforePoint = routeCoordinates[segment.beforeIdx];
-          const lookAfterPoint = routeCoordinates[segment.afterIdx];
-          
-          // Create interpolated look-ahead point
-          lookAheadCoord = [
-            lookBeforePoint[0] + (lookAfterPoint[0] - lookBeforePoint[0]) * segment.fraction,
-            lookBeforePoint[1] + (lookAfterPoint[1] - lookBeforePoint[1]) * segment.fraction
-          ];
-          
-          // Calculate simple bearing
-          bearing = calculateBearing(lookBeforePoint, lookAfterPoint);
-          lastLookAheadIndex = segment.beforeIdx;
-        }
+      // Calculate the interpolated look-ahead point
+      const lookAheadCoord = [
+        lookBeforePoint[0] + (lookAfterPoint[0] - lookBeforePoint[0]) * lookAheadSegment.fraction,
+        lookBeforePoint[1] + (lookAfterPoint[1] - lookBeforePoint[1]) * lookAheadSegment.fraction
+      ];
+      
+      // Calculate the bearing
+      let bearing;
+      
+      // Get a point further ahead for better bearing calculation
+      const bearingDistanceKm = (currentRouteDistance + lookAheadMeters + 10) / 1000; // 10m further
+      const bearingSegment = calculateSegmentForDistance(bearingDistanceKm);
+      const bearingPoint = routeCoordinates[bearingSegment.afterIdx];
+      
+      if (bearingPoint && bearingPoint.length >= 2) {
+        bearing = calculateBearing(lookAheadCoord, bearingPoint);
+      } else {
+        // Use simple bearing between current segment points as fallback
+        bearing = calculateBearing(lookBeforePoint, lookAfterPoint);
       }
       
       // Set the target bearing based on our calculated bearing
