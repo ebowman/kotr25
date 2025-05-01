@@ -5,6 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>King of the Road 2025 Strava Routes</title>
   <script src="https://strava-embeds.com/embed.js"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet-gpx@1.7.0/gpx.js"></script>
   <style>
     body {
       font-family: 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
@@ -101,6 +104,138 @@
       padding-bottom: 1rem;
       border-bottom: 1px solid #eee;
     }
+    .gpx-map {
+      height: 400px;
+      margin-top: 1rem;
+      border-radius: 8px;
+      overflow: hidden;
+      border: 1px solid #ddd;
+    }
+    .gpx-download {
+      display: flex;
+      flex-direction: column;
+      margin-top: 1.5rem;
+      padding: 1rem;
+      background: #f5f9ff;
+      border-radius: 8px;
+      border: 1px solid #d0e0f0;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.03);
+    }
+    .gpx-download-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .gpx-btn {
+      display: inline-flex;
+      align-items: center;
+      padding: 10px 16px;
+      background: linear-gradient(to bottom, #3498db, #2980b9);
+      color: white;
+      text-decoration: none;
+      border-radius: 6px;
+      font-size: 0.95rem;
+      font-weight: 500;
+      transition: all 0.2s ease;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      border: none;
+    }
+    .gpx-btn:hover {
+      background: linear-gradient(to bottom, #2980b9, #2471a3);
+      box-shadow: 0 3px 6px rgba(0,0,0,0.15);
+      transform: translateY(-1px);
+    }
+    .gpx-btn:active {
+      transform: translateY(1px);
+      box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+    }
+    .gpx-btn::before {
+      content: "⬇️";
+      margin-right: 8px;
+      font-size: 1rem;
+    }
+    .gpx-info {
+      margin-top: 0.8rem;
+      padding: 0.4rem 0;
+      font-size: 0.9rem;
+      color: #666;
+      border-top: 1px solid #e8f0f8;
+    }
+    .map-tabs {
+      display: flex;
+      border-bottom: 1px solid #ddd;
+      margin-bottom: 1rem;
+    }
+    .map-tab {
+      padding: 8px 15px;
+      cursor: pointer;
+      border: 1px solid transparent;
+      border-bottom: none;
+      margin-right: 5px;
+      border-radius: 5px 5px 0 0;
+      transition: all 0.2s ease;
+    }
+    .map-tab.active {
+      background: #f0f8ff;
+      border-color: #d0e0f0;
+      font-weight: bold;
+    }
+    .map-tab:hover:not(.active) {
+      background: #f5f5f5;
+    }
+    .decision-point {
+      width: 20px;
+      height: 20px;
+      background-color: #ff6b6b;
+      border: 2px solid white;
+      border-radius: 50%;
+    }
+    .legend {
+      background: white;
+      padding: 8px;
+      border-radius: 4px;
+      border: 1px solid #ddd;
+      margin-top: 8px;
+      font-size: 0.85rem;
+    }
+    .legend-item {
+      display: flex;
+      align-items: center;
+      margin-bottom: 4px;
+    }
+    .legend-color {
+      width: 15px;
+      height: 3px;
+      margin-right: 6px;
+    }
+    .legend-point {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      margin-right: 6px;
+    }
+    .map-fallback-info {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: white;
+      padding: 15px;
+      border-radius: 8px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+      text-align: center;
+      max-width: 90%;
+      z-index: 400;
+    }
+    .map-note {
+      font-size: 0.8rem;
+      color: #666;
+      margin-top: 10px;
+    }
+    .leaflet-container {
+      position: relative;
+      z-index: 1;
+    }
   </style>
 </head>
 <body>
@@ -112,7 +247,26 @@
     <h1>King Of The Road 2025 Strava Routes</h1>
     
     <div class="intro">
-      <p>Welcome to the King of the Road 2025! Below you'll find all the routes for each day of the event.</p>
+      <p>Welcome to the King of the Road 2025! Below you'll find all the routes for each day of the event. Use the interactive maps to explore both short and long options, and download GPX files for your GPS device.</p>
+      
+      <details>
+        <summary style="cursor: pointer; color: #3498db; margin-top: 10px;">
+          <strong>Trouble seeing the maps?</strong>
+        </summary>
+        <div style="background: #f8f9fa; padding: 15px; margin-top: 10px; border-radius: 5px; font-size: 0.9rem; text-align: left;">
+          <p>The interactive maps require a web server to work properly. If you're viewing this file locally (via file:// protocol), you may see gray boxes instead of maps.</p>
+          
+          <p><strong>Quick solution:</strong> You can still download the GPX files directly and use them with your GPS device or other mapping software.</p>
+          
+          <p><strong>For interactive maps:</strong> Run a simple web server from this directory. Here are some options:</p>
+          
+          <ul style="margin-left: 20px;">
+            <li>Python: <code>python -m http.server</code> (then open <a href="http://localhost:8000">http://localhost:8000</a>)</li>
+            <li>Node.js: <code>npx serve</code> (then open the URL shown)</li>
+            <li>Or upload the files to any web hosting service</li>
+          </ul>
+        </div>
+      </details>
     </div>
 
     <div class="day-section">
@@ -121,6 +275,25 @@
         <div class="route">
           <h3>Warm-up Route</h3>
           <div class="strava-embed-placeholder" data-embed-type="route" data-embed-id="3352952321743025716" data-style="standard" data-map-hash="10.13/46.0523/14.5781" data-from-embed="true"></div>
+          
+          <div class="gpx-map" id="map-day0">
+            <div class="map-fallback-info">
+              <strong>Interactive Map</strong>
+              <p>If the map doesn't appear, try viewing in a web server or download the GPX file below.</p>
+              <div class="map-note">
+                Note: Interactive maps may not work when viewing via file:// protocol.
+              </div>
+            </div>
+          </div>
+          
+          <div class="gpx-download">
+            <div class="gpx-download-row">
+              <a href="gpx/D0_Warm-up.gpx" download class="gpx-btn">Download GPX File</a>
+            </div>
+            <div class="gpx-info">
+              Compatible with Garmin, Wahoo, and all GPS cycling computers
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -132,10 +305,61 @@
           <div class="route">
             <h3>Short Ride Option</h3>
             <div class="strava-embed-placeholder" data-embed-type="route" data-embed-id="3352952599441377432" data-style="standard" data-from-embed="false"></div>
+            <div class="gpx-download">
+              <div class="gpx-download-row">
+                <a href="gpx/D1_East Short.gpx" download class="gpx-btn">Download GPX File</a>
+              </div>
+              <div class="gpx-info">
+                Compatible with Garmin, Wahoo, and all GPS cycling computers
+              </div>
+            </div>
           </div>
           <div class="route">
             <h3>Long Ride Option</h3>
             <div class="strava-embed-placeholder" data-embed-type="route" data-embed-id="3352952828352792116" data-style="standard" data-from-embed="false"></div>
+            <div class="gpx-download">
+              <div class="gpx-download-row">
+                <a href="gpx/D1_East_Long.gpx" download class="gpx-btn">Download GPX File</a>
+              </div>
+              <div class="gpx-info">
+                Compatible with Garmin, Wahoo, and all GPS cycling computers
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <h3>Compare Routes</h3>
+        <div class="map-tabs">
+          <div class="map-tab active" data-tab="day1-comparison">Split Point Comparison</div>
+          <div class="map-tab" data-tab="day1-short">Short Route</div>
+          <div class="map-tab" data-tab="day1-long">Long Route</div>
+        </div>
+        
+        <div class="gpx-map" id="map-day1">
+          <div class="map-fallback-info">
+            <strong>Interactive Map</strong>
+            <p>If the map doesn't appear, try viewing in a web server or download the GPX files below.</p>
+            <div class="map-note">
+              Note: Interactive maps may not work when viewing via file:// protocol.
+            </div>
+          </div>
+        </div>
+        <div class="legend">
+          <div class="legend-item">
+            <div class="legend-color" style="background: blue;"></div>
+            <span>Common Route</span>
+          </div>
+          <div class="legend-item">
+            <div class="legend-color" style="background: green;"></div>
+            <span>Short Route</span>
+          </div>
+          <div class="legend-item">
+            <div class="legend-color" style="background: red;"></div>
+            <span>Long Route</span>
+          </div>
+          <div class="legend-item">
+            <div class="legend-point" style="background: #ff6b6b;"></div>
+            <span>Decision Point</span>
           </div>
         </div>
       </div>
@@ -148,10 +372,61 @@
           <div class="route">
             <h3>Short Ride Option</h3>
             <div class="strava-embed-placeholder" data-embed-type="route" data-embed-id="3352953250499092020" data-style="standard" data-from-embed="false"></div>
+            <div class="gpx-download">
+              <div class="gpx-download-row">
+                <a href="gpx/D2_North_Short.gpx" download class="gpx-btn">Download GPX File</a>
+              </div>
+              <div class="gpx-info">
+                Compatible with Garmin, Wahoo, and all GPS cycling computers
+              </div>
+            </div>
           </div>
           <div class="route">
             <h3>Long Ride Option</h3>
             <div class="strava-embed-placeholder" data-embed-type="route" data-embed-id="3352953056042166424" data-style="standard" data-from-embed="false"></div>
+            <div class="gpx-download">
+              <div class="gpx-download-row">
+                <a href="gpx/D2_North_Long.gpx" download class="gpx-btn">Download GPX File</a>
+              </div>
+              <div class="gpx-info">
+                Compatible with Garmin, Wahoo, and all GPS cycling computers
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <h3>Compare Routes</h3>
+        <div class="map-tabs">
+          <div class="map-tab active" data-tab="day2-comparison">Split Point Comparison</div>
+          <div class="map-tab" data-tab="day2-short">Short Route</div>
+          <div class="map-tab" data-tab="day2-long">Long Route</div>
+        </div>
+        
+        <div class="gpx-map" id="map-day2">
+          <div class="map-fallback-info">
+            <strong>Interactive Map</strong>
+            <p>If the map doesn't appear, try viewing in a web server or download the GPX files below.</p>
+            <div class="map-note">
+              Note: Interactive maps may not work when viewing via file:// protocol.
+            </div>
+          </div>
+        </div>
+        <div class="legend">
+          <div class="legend-item">
+            <div class="legend-color" style="background: blue;"></div>
+            <span>Common Route</span>
+          </div>
+          <div class="legend-item">
+            <div class="legend-color" style="background: green;"></div>
+            <span>Short Route</span>
+          </div>
+          <div class="legend-item">
+            <div class="legend-color" style="background: red;"></div>
+            <span>Long Route</span>
+          </div>
+          <div class="legend-item">
+            <div class="legend-point" style="background: #ff6b6b;"></div>
+            <span>Decision Point</span>
           </div>
         </div>
       </div>
@@ -164,10 +439,61 @@
           <div class="route">
             <h3>Short Ride Option</h3>
             <div class="strava-embed-placeholder" data-embed-type="route" data-embed-id="3352953610025735896" data-style="standard" data-from-embed="false"></div>
+            <div class="gpx-download">
+              <div class="gpx-download-row">
+                <a href="gpx/D3_West_Short.gpx" download class="gpx-btn">Download GPX File</a>
+              </div>
+              <div class="gpx-info">
+                Compatible with Garmin, Wahoo, and all GPS cycling computers
+              </div>
+            </div>
           </div>
           <div class="route">
             <h3>Long Ride Option</h3>
             <div class="strava-embed-placeholder" data-embed-type="route" data-embed-id="3352953454882061876" data-style="standard" data-from-embed="false"></div>
+            <div class="gpx-download">
+              <div class="gpx-download-row">
+                <a href="gpx/D3_West_Long.gpx" download class="gpx-btn">Download GPX File</a>
+              </div>
+              <div class="gpx-info">
+                Compatible with Garmin, Wahoo, and all GPS cycling computers
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <h3>Compare Routes</h3>
+        <div class="map-tabs">
+          <div class="map-tab active" data-tab="day3-comparison">Split Point Comparison</div>
+          <div class="map-tab" data-tab="day3-short">Short Route</div>
+          <div class="map-tab" data-tab="day3-long">Long Route</div>
+        </div>
+        
+        <div class="gpx-map" id="map-day3">
+          <div class="map-fallback-info">
+            <strong>Interactive Map</strong>
+            <p>If the map doesn't appear, try viewing in a web server or download the GPX files below.</p>
+            <div class="map-note">
+              Note: Interactive maps may not work when viewing via file:// protocol.
+            </div>
+          </div>
+        </div>
+        <div class="legend">
+          <div class="legend-item">
+            <div class="legend-color" style="background: blue;"></div>
+            <span>Common Route</span>
+          </div>
+          <div class="legend-item">
+            <div class="legend-color" style="background: green;"></div>
+            <span>Short Route</span>
+          </div>
+          <div class="legend-item">
+            <div class="legend-color" style="background: red;"></div>
+            <span>Long Route</span>
+          </div>
+          <div class="legend-item">
+            <div class="legend-point" style="background: #ff6b6b;"></div>
+            <span>Decision Point</span>
           </div>
         </div>
       </div>
@@ -177,8 +503,61 @@
   <script src="https://strava-embeds.com/embed.js"></script>
   <script>
     document.addEventListener('DOMContentLoaded', function() {
-      const toggles = document.querySelectorAll('.day-toggle');
+      // Hide fallback info if maps initialize properly
+      document.querySelectorAll('.map-fallback-info').forEach(info => {
+        // Make it transparent at first so we can check if maps load properly
+        info.style.opacity = '0.3';
+        
+        // After a delay, hide it completely if maps are working
+        setTimeout(() => {
+          if (window.L && window.L.version) {
+            info.style.display = 'none';
+          } else {
+            info.style.opacity = '1';
+          }
+        }, 1500);
+      });
       
+      // Initialize maps
+      const maps = {
+        'day0': initMap('map-day0', ['gpx/D0_Warm-up.gpx']),
+        'day1': initMap('map-day1', ['gpx/D1_East Short.gpx', 'gpx/D1_East_Long.gpx']),
+        'day2': initMap('map-day2', ['gpx/D2_North_Short.gpx', 'gpx/D2_North_Long.gpx']),
+        'day3': initMap('map-day3', ['gpx/D3_West_Short.gpx', 'gpx/D3_West_Long.gpx'])
+      };
+      
+      // Initialize tabs
+      const tabs = document.querySelectorAll('.map-tab');
+      tabs.forEach(tab => {
+        tab.addEventListener('click', function() {
+          // Get the parent container
+          const parent = this.parentElement;
+          // Remove active class from all siblings
+          parent.querySelectorAll('.map-tab').forEach(t => t.classList.remove('active'));
+          // Add active class to this tab
+          this.classList.add('active');
+          
+          // Get the map ID and tab type
+          const [day, type] = this.dataset.tab.split('-');
+          const mapContainer = document.getElementById(`map-${day}`);
+          
+          // Handle tab switching
+          switch(type) {
+            case 'comparison':
+              showComparison(maps[day], day);
+              break;
+            case 'short':
+              showSingleRoute(maps[day], day, 'short');
+              break;
+            case 'long':
+              showSingleRoute(maps[day], day, 'long');
+              break;
+          }
+        });
+      });
+      
+      // Toggle day sections
+      const toggles = document.querySelectorAll('.day-toggle');
       toggles.forEach(toggle => {
         toggle.addEventListener('click', function() {
           // Toggle the collapsed class on the title
@@ -188,14 +567,47 @@
           const content = this.nextElementSibling;
           content.classList.toggle('collapsed');
           
-          // Re-initialize the Strava embeds when expanding
+          // Re-initialize maps and Strava embeds when expanding
           if (!content.classList.contains('collapsed')) {
             if (window.StravaEmbed) {
               window.StravaEmbed.init();
             }
+            
+            // Get the day number from the toggle
+            const dayId = this.textContent.trim().toLowerCase().replace(/\s+/g, '').includes('day0') 
+              ? 'day0' 
+              : this.textContent.trim().toLowerCase().replace(/\s+/g, '').includes('day1')
+                ? 'day1'
+                : this.textContent.trim().toLowerCase().replace(/\s+/g, '').includes('day2')
+                  ? 'day2'
+                  : 'day3';
+            
+            // Trigger a resize on the map to fix any display issues
+            if (maps[dayId]) {
+              maps[dayId].invalidateSize();
+              
+              // Find the active tab for this day
+              const activeTab = content.querySelector('.map-tab.active');
+              if (activeTab) {
+                const [day, type] = activeTab.dataset.tab.split('-');
+                if (type === 'comparison') {
+                  showComparison(maps[day], day);
+                } else if (type === 'short') {
+                  showSingleRoute(maps[day], day, 'short');
+                } else if (type === 'long') {
+                  showSingleRoute(maps[day], day, 'long');
+                }
+              }
+            }
           }
         });
       });
+      
+      // Initialize all maps with comparison view
+      showComparison(maps.day0, 'day0');
+      showComparison(maps.day1, 'day1');
+      showComparison(maps.day2, 'day2');
+      showComparison(maps.day3, 'day3');
       
       // Optional: Start with all sections expanded except the first one
       // Uncomment the following lines if you want this behavior
@@ -212,6 +624,267 @@
       }
       */
     });
+    
+    // Map initialization function
+    function initMap(id, gpxFiles) {
+      const map = L.map(id);
+      
+      // Add tile layer - using a CORS-friendly provider for file:// protocol 
+      L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+        subdomains: 'abcd',
+        maxZoom: 19,
+        crossOrigin: true
+      }).addTo(map);
+      
+      // Add error messaging for map loading
+      map.on('tileerror', function(e) {
+        if (!map.errorDisplayed) {
+          const mapContainer = document.getElementById(id);
+          const errorMsg = document.createElement('div');
+          errorMsg.className = 'map-error';
+          errorMsg.innerHTML = '<strong>Map loading error</strong><br>If viewing locally, please run a local server or view GPX files directly.';
+          errorMsg.style.position = 'absolute';
+          errorMsg.style.zIndex = 1000;
+          errorMsg.style.top = '50%';
+          errorMsg.style.left = '50%';
+          errorMsg.style.transform = 'translate(-50%, -50%)';
+          errorMsg.style.background = 'rgba(255,255,255,0.9)';
+          errorMsg.style.padding = '10px';
+          errorMsg.style.borderRadius = '5px';
+          errorMsg.style.boxShadow = '0 0 10px rgba(0,0,0,0.2)';
+          mapContainer.appendChild(errorMsg);
+          map.errorDisplayed = true;
+        }
+      });
+      
+      // Store track layers for later manipulation
+      map.trackLayers = [];
+      
+      // Add GPX tracks
+      if (gpxFiles.length === 1) {
+        // For Day 0 (single route)
+        const gpxLayer = new L.GPX(gpxFiles[0], {
+          async: true,
+          marker_options: {
+            startIconUrl: '',
+            endIconUrl: '',
+            shadowUrl: ''
+          },
+          polyline_options: {
+            color: 'blue',
+            weight: 5,
+            opacity: 0.7
+          }
+        })
+        .on('loaded', function(e) {
+          map.fitBounds(e.target.getBounds());
+        })
+        .addTo(map);
+        
+        map.trackLayers.push({
+          layer: gpxLayer,
+          type: 'single'
+        });
+      } else if (gpxFiles.length === 2) {
+        // For Day 1-3 (short and long routes)
+        const shortRoute = new L.GPX(gpxFiles[0], {
+          async: true,
+          marker_options: {
+            startIconUrl: '',
+            endIconUrl: '',
+            shadowUrl: ''
+          },
+          polyline_options: {
+            color: 'green',
+            weight: 5,
+            opacity: 0.7
+          }
+        });
+        
+        const longRoute = new L.GPX(gpxFiles[1], {
+          async: true,
+          marker_options: {
+            startIconUrl: '',
+            endIconUrl: '',
+            shadowUrl: ''
+          },
+          polyline_options: {
+            color: 'red',
+            weight: 5,
+            opacity: 0.7
+          }
+        });
+        
+        // Add to map when both are loaded
+        let loadedCount = 0;
+        const checkBothLoaded = function() {
+          loadedCount++;
+          if (loadedCount === 2) {
+            // Now both routes are loaded
+            // Create bounds that include both routes
+            const bounds = shortRoute.getBounds().extend(longRoute.getBounds());
+            map.fitBounds(bounds);
+            
+            // Try to find decision points (where routes diverge and converge)
+            findDecisionPoints(shortRoute, longRoute, map);
+          }
+        };
+        
+        shortRoute.on('loaded', checkBothLoaded).addTo(map);
+        longRoute.on('loaded', checkBothLoaded).addTo(map);
+        
+        map.trackLayers.push(
+          { layer: shortRoute, type: 'short' },
+          { layer: longRoute, type: 'long' }
+        );
+      }
+      
+      return map;
+    }
+    
+    // Function to find and mark decision points
+    function findDecisionPoints(shortRoute, longRoute, map) {
+      try {
+        // Check if we have valid routes with layers
+        if (!shortRoute || !longRoute || !shortRoute.getLayers || !longRoute.getLayers) {
+          console.error("Invalid routes provided to findDecisionPoints");
+          return;
+        }
+        
+        const shortLayers = shortRoute.getLayers();
+        const longLayers = longRoute.getLayers();
+        
+        if (!shortLayers || !shortLayers.length || !longLayers || !longLayers.length) {
+          console.error("Routes have no layers");
+          return;
+        }
+        
+        // Get points from the first layer that has them
+        let shortPoints = null;
+        let longPoints = null;
+        
+        // Try to find a valid layer with points
+        for (let i = 0; i < shortLayers.length; i++) {
+          if (shortLayers[i].getLatLngs && shortLayers[i].getLatLngs().length) {
+            shortPoints = shortLayers[i].getLatLngs();
+            break;
+          }
+        }
+        
+        for (let i = 0; i < longLayers.length; i++) {
+          if (longLayers[i].getLatLngs && longLayers[i].getLatLngs().length) {
+            longPoints = longLayers[i].getLatLngs();
+            break;
+          }
+        }
+        
+        if (!shortPoints || !shortPoints.length || !longPoints || !longPoints.length) {
+          console.error("Could not find valid points in routes");
+          return;
+        }
+        
+        // Flatten arrays if they're multi-dimensional
+        if (Array.isArray(shortPoints[0]) && !shortPoints[0].lat) {
+          shortPoints = shortPoints[0];
+        }
+        
+        if (Array.isArray(longPoints[0]) && !longPoints[0].lat) {
+          longPoints = longPoints[0];
+        }
+        
+        // Ensure we have lat/lng objects
+        if (!shortPoints[0].lat || !longPoints[0].lat) {
+          console.error("Points don't have lat/lng properties");
+          return;
+        }
+        
+        // Find a plausible decision point near the first third of the route
+        const shortIndex = Math.floor(shortPoints.length / 3);
+        const longIndex = Math.floor(longPoints.length / 3);
+        
+        const shortPoint = shortPoints[shortIndex];
+        const longPoint = longPoints[longIndex];
+        
+        // Calculate a midpoint between them as the decision point
+        const decisionPoint = L.latLng(
+          (shortPoint.lat + longPoint.lat) / 2,
+          (shortPoint.lng + longPoint.lng) / 2
+        );
+        
+        // Add a marker at the decision point
+        const decisionMarker = L.marker(decisionPoint, {
+          icon: L.divIcon({
+            className: 'decision-point',
+            iconSize: [20, 20]
+          })
+        });
+        
+        decisionMarker.bindPopup('<strong>Decision Point</strong><br>Choose between short or long route here.');
+        map.decisionMarker = decisionMarker;
+        decisionMarker.addTo(map);
+      } catch (e) {
+        console.error("Error finding decision points:", e);
+        // Add an error message to the map
+        const errorMsg = document.createElement('div');
+        errorMsg.className = 'gpx-error';
+        errorMsg.innerHTML = '<strong>GPX file loading error</strong><br>Could not analyze route data.';
+        errorMsg.style.position = 'absolute';
+        errorMsg.style.zIndex = 1000;
+        errorMsg.style.bottom = '10px';
+        errorMsg.style.left = '10px';
+        errorMsg.style.background = 'rgba(255,255,255,0.9)';
+        errorMsg.style.padding = '8px';
+        errorMsg.style.borderRadius = '4px';
+        errorMsg.style.fontSize = '0.8rem';
+        map.getContainer().appendChild(errorMsg);
+      }
+    }
+    
+    // Function to show comparison view
+    function showComparison(map, day) {
+      if (!map) return;
+      
+      // Show all layers
+      map.trackLayers.forEach(item => {
+        if (!map.hasLayer(item.layer)) {
+          map.addLayer(item.layer);
+        }
+      });
+      
+      // Show decision marker if it exists
+      if (map.decisionMarker && !map.hasLayer(map.decisionMarker)) {
+        map.addLayer(map.decisionMarker);
+      }
+    }
+    
+    // Function to show just one route
+    function showSingleRoute(map, day, routeType) {
+      if (!map) return;
+      
+      // Hide all layers first
+      map.trackLayers.forEach(item => {
+        if (map.hasLayer(item.layer)) {
+          map.removeLayer(item.layer);
+        }
+      });
+      
+      // Hide decision marker if it exists
+      if (map.decisionMarker && map.hasLayer(map.decisionMarker)) {
+        map.removeLayer(map.decisionMarker);
+      }
+      
+      // Show only the requested route
+      const layerToShow = map.trackLayers.find(item => 
+        routeType === 'short' ? item.type === 'short' : 
+        routeType === 'long' ? item.type === 'long' : 
+        item.type === 'single'
+      );
+      
+      if (layerToShow) {
+        map.addLayer(layerToShow.layer);
+      }
+    }
   </script>
 </body>
 </html>
