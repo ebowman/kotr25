@@ -779,29 +779,82 @@
     // Mapbox access token
     mapboxgl.accessToken = 'pk.eyJ1IjoiZWJvd21hbiIsImEiOiJjbWE1ZWVwdzYwODhwMmlzZnU4NTlyem1rIn0.E10X5hj2NTgViJexKpvrOg';
     
-    document.addEventListener('DOMContentLoaded', function() {
-      // Hide fallback info if maps initialize properly
-      document.querySelectorAll('.map-fallback-info').forEach(info => {
-        // Make it transparent at first so we can check if maps load properly
-        info.style.opacity = '0.3';
-        
-        // After a delay, hide it completely if maps are working
-        setTimeout(() => {
-          if (window.mapboxgl) {
-            info.style.display = 'none';
-          } else {
-            info.style.opacity = '1';
+    // Store map references globally
+    const maps = {};
+    
+    // Store map data configurations
+    const mapConfigs = {
+      'day0': {
+        element: 'map-day0',
+        files: ['gpx/D0_Warm-up.gpx'],
+        initialized: false
+      },
+      'day1': {
+        element: 'map-day1',
+        files: ['gpx/D1_East Short.gpx', 'gpx/D1_East_Long.gpx'],
+        initialized: false
+      },
+      'day2': {
+        element: 'map-day2',
+        files: ['gpx/D2_North_Short.gpx', 'gpx/D2_North_Long.gpx'],
+        initialized: false
+      },
+      'day3': {
+        element: 'map-day3',
+        files: ['gpx/D3_West_Short.gpx', 'gpx/D3_West_Long.gpx'],
+        initialized: false
+      }
+    };
+    
+    // Function to initialize a map when its section is expanded
+    function initializeMapIfNeeded(dayId) {
+      if (!maps[dayId] && mapConfigs[dayId]) {
+        // Make sure container is empty and visible
+        const container = document.getElementById(mapConfigs[dayId].element);
+        if (container) {
+          // Clear any fallback messages or previous content
+          container.innerHTML = '';
+          
+          // Initialize the map
+          maps[dayId] = initMap(mapConfigs[dayId].element, mapConfigs[dayId].files);
+          mapConfigs[dayId].initialized = true;
+          
+          // Remove fallback message if it exists
+          const fallbackInfo = container.querySelector('.map-fallback-info');
+          if (fallbackInfo) {
+            fallbackInfo.style.display = 'none';
           }
-        }, 1500);
-      });
-      
-      // Initialize maps
-      const maps = {
-        'day0': initMap('map-day0', ['gpx/D0_Warm-up.gpx']),
-        'day1': initMap('map-day1', ['gpx/D1_East Short.gpx', 'gpx/D1_East_Long.gpx']),
-        'day2': initMap('map-day2', ['gpx/D2_North_Short.gpx', 'gpx/D2_North_Long.gpx']),
-        'day3': initMap('map-day3', ['gpx/D3_West_Short.gpx', 'gpx/D3_West_Long.gpx'])
-      };
+          
+          return maps[dayId];
+        }
+      }
+      return maps[dayId];
+    }
+    
+    // Only initialize the first map on page load
+    document.addEventListener('DOMContentLoaded', function() {
+      // Initialize only the first map (day0) on page load
+      // Other maps will be initialized when their sections are opened
+      setTimeout(() => {
+        const activeSection = document.querySelector('.day-content:not(.collapsed)');
+        if (activeSection) {
+          const dayId = activeSection.closest('.day-section').querySelector('.day-toggle').textContent
+            .trim().toLowerCase().replace(/\s+/g, '').includes('day0') 
+            ? 'day0' 
+            : activeSection.closest('.day-section').querySelector('.day-toggle').textContent
+                .trim().toLowerCase().replace(/\s+/g, '').includes('day1')
+              ? 'day1'
+              : activeSection.closest('.day-section').querySelector('.day-toggle').textContent
+                  .trim().toLowerCase().replace(/\s+/g, '').includes('day2')
+                ? 'day2'
+                : 'day3';
+          
+          initializeMapIfNeeded(dayId);
+        } else {
+          // If all sections are collapsed, initialize first section's map
+          initializeMapIfNeeded('day0');
+        }
+      }, 500);
       
       // Initialize tabs
       const tabs = document.querySelectorAll('.map-tab');
@@ -816,18 +869,21 @@
           
           // Get the map ID and tab type
           const [day, type] = this.dataset.tab.split('-');
-          const mapContainer = document.getElementById(`map-${day}`);
+          
+          // Make sure the map is initialized
+          const map = initializeMapIfNeeded(day);
+          if (!map) return;
           
           // Handle tab switching
           switch(type) {
             case 'comparison':
-              showComparison(maps[day], day);
+              showComparison(map, day);
               break;
             case 'short':
-              showSingleRoute(maps[day], day, 'short');
+              showSingleRoute(map, day, 'short');
               break;
             case 'long':
-              showSingleRoute(maps[day], day, 'long');
+              showSingleRoute(map, day, 'long');
               break;
           }
         });
@@ -844,13 +900,13 @@
           const content = this.nextElementSibling;
           content.classList.toggle('collapsed');
           
-          // Re-initialize maps and Strava embeds when expanding
+          // Initialize maps and Strava embeds when expanding
           if (!content.classList.contains('collapsed')) {
             if (window.StravaEmbed) {
               window.StravaEmbed.init();
             }
             
-            // Get the day number from the toggle
+            // Get the day ID from the toggle
             const dayId = this.textContent.trim().toLowerCase().replace(/\s+/g, '').includes('day0') 
               ? 'day0' 
               : this.textContent.trim().toLowerCase().replace(/\s+/g, '').includes('day1')
@@ -859,20 +915,23 @@
                   ? 'day2'
                   : 'day3';
             
-            // Trigger a resize on the map to fix any display issues
-            if (maps[dayId]) {
-              maps[dayId].resize();
+            // Initialize the map if needed, or resize if already initialized
+            const map = initializeMapIfNeeded(dayId);
+            
+            if (map) {
+              // Ensure the map resizes to fit its container
+              map.resize();
               
               // Find the active tab for this day
               const activeTab = content.querySelector('.map-tab.active');
               if (activeTab) {
                 const [day, type] = activeTab.dataset.tab.split('-');
                 if (type === 'comparison') {
-                  showComparison(maps[day], day);
+                  showComparison(map, day);
                 } else if (type === 'short') {
-                  showSingleRoute(maps[day], day, 'short');
+                  showSingleRoute(map, day, 'short');
                 } else if (type === 'long') {
-                  showSingleRoute(maps[day], day, 'long');
+                  showSingleRoute(map, day, 'long');
                 }
               }
             }
@@ -880,11 +939,12 @@
         });
       });
       
-      // Initialize all maps with comparison view
-      showComparison(maps.day0, 'day0');
-      showComparison(maps.day1, 'day1');
-      showComparison(maps.day2, 'day2');
-      showComparison(maps.day3, 'day3');
+      // Initialize comparison view for any loaded maps
+      Object.keys(maps).forEach(dayId => {
+        if (maps[dayId]) {
+          showComparison(maps[dayId], dayId);
+        }
+      });
       
       // Optional: Start with all sections expanded except the first one
       // Uncomment the following lines if you want this behavior
@@ -948,6 +1008,7 @@
     async function loadGPXRoutes(map, gpxFiles) {
       try {
         const bounds = new mapboxgl.LngLatBounds();
+        const mapId = map.getContainer().id;
         
         // Load each GPX file
         for (let i = 0; i < gpxFiles.length; i++) {
@@ -998,8 +1059,8 @@
           }
           
           // Add source and layer
-          const sourceId = `route-${id}-${i}`;
-          const layerId = `route-layer-${id}-${i}`;
+          const sourceId = `route-${mapId}-${i}`;
+          const layerId = `route-layer-${mapId}-${i}`;
           
           map.addSource(sourceId, {
             type: 'geojson',
