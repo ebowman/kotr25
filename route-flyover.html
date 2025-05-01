@@ -1,0 +1,2015 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>King of the Road 2025 - Route Flyover</title>
+  <link rel="stylesheet" href="https://unpkg.com/mapbox-gl@2.15.0/dist/mapbox-gl.css">
+  <script src="https://unpkg.com/mapbox-gl@2.15.0/dist/mapbox-gl.js"></script>
+  <script src="https://unpkg.com/@turf/turf@6.5.0/turf.min.js"></script>
+  <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      background: #f9f9f9;
+      color: #333;
+    }
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 20px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 20px;
+    }
+    h1 {
+      width: 100%;
+      text-align: center;
+      margin-bottom: 10px;
+      color: #222;
+    }
+    #map {
+      flex: 1;
+      min-width: 700px;
+      height: 600px;
+      border-radius: 8px;
+      box-shadow: 0 4px 8px rgba(0,0,0,0.05);
+    }
+    .controls {
+      width: 280px;
+      padding: 15px;
+      background: white;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+    select, button {
+      padding: 10px 15px;
+      border-radius: 5px;
+      border: 1px solid #ddd;
+      background: white;
+      font-size: 14px;
+      width: 100%;
+    }
+    button {
+      background: linear-gradient(to bottom, #3498db, #2980b9);
+      color: white;
+      cursor: pointer;
+      border: none;
+      transition: all 0.2s;
+      font-weight: 600;
+    }
+    button:hover {
+      background: linear-gradient(to bottom, #2980b9, #2471a3);
+      transform: translateY(-1px);
+    }
+    button:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+    }
+    label {
+      font-weight: 600;
+      margin-bottom: 5px;
+      display: block;
+      color: #444;
+    }
+    .control-group {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .route-info {
+      background: white;
+      border-radius: 8px;
+      padding: 15px;
+      margin-top: 20px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    }
+    .info-grid {
+      display: flex;
+      justify-content: space-between;
+      flex-wrap: nowrap;
+      gap: 15px;
+      margin-top: 10px;
+    }
+    .info-item {
+      flex: 1;
+      text-align: center;
+      padding: 12px;
+      background: #f5f9ff;
+      border-radius: 5px;
+    }
+    .info-label {
+      font-size: 12px;
+      color: #666;
+      margin-bottom: 5px;
+    }
+    .info-value {
+      font-size: 20px;
+      font-weight: 600;
+      color: #2c3e50;
+    }
+    .elevation-profile {
+      width: 100%;
+      height: 120px;
+      background: white;
+      margin-top: 20px;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+      position: relative;
+    }
+    #elevation-canvas {
+      width: 100%;
+      height: 100%;
+      border-radius: 8px;
+    }
+    .elevation-marker {
+      position: absolute;
+      top: 0;
+      width: 2px;
+      height: 120px;
+      background: red;
+      z-index: 10;
+      pointer-events: none;
+    }
+    .loading {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(255,255,255,0.8);
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      z-index: 1000;
+    }
+    .loading-spinner {
+      border: 5px solid #f3f3f3;
+      border-top: 5px solid #3498db;
+      border-radius: 50%;
+      width: 50px;
+      height: 50px;
+      animation: spin 1s linear infinite;
+      margin-bottom: 15px;
+    }
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    .slider-container {
+      margin-top: 5px;
+    }
+    .range-labels {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      color: #666;
+      margin-top: 5px;
+    }
+    input[type="range"] {
+      width: 100%;
+      margin: 0;
+      -webkit-appearance: none;
+      appearance: none;
+      height: 6px;
+      background: #e0e0e0;
+      border-radius: 3px;
+      outline: none;
+    }
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: #3498db;
+      cursor: pointer;
+      border: 2px solid white;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+    }
+    input[type="range"]::-moz-range-thumb {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: #3498db;
+      cursor: pointer;
+      border: 2px solid white;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>King of the Road 2025 - 3D Route Flyover</h1>
+    
+    <div class="controls">
+      <div class="control-group">
+        <label for="route-select">Select Route:</label>
+        <select id="route-select">
+          <option value="D0_Warm-up.gpx">Day 0 - Warm-up</option>
+          <option value="D1_East Short.gpx">Day 1 - East (Short)</option>
+          <option value="D1_East_Long.gpx">Day 1 - East (Long)</option>
+          <option value="D2_North_Short.gpx">Day 2 - North (Short)</option>
+          <option value="D2_North_Long.gpx">Day 2 - North (Long)</option>
+          <option value="D3_West_Short.gpx">Day 3 - West (Short)</option>
+          <option value="D3_West_Long.gpx">Day 3 - West (Long)</option>
+        </select>
+      </div>
+      
+      <div class="control-group">
+        <label for="camera-height">Camera Height:</label>
+        <div class="slider-container">
+          <input type="range" id="camera-height" min="1" max="100" step="1" value="25">
+          <div class="range-labels">
+            <span>Close</span>
+            <span>Far</span>
+          </div>
+        </div>
+      </div>
+      
+      <div class="control-group">
+        <label for="speed-control">Animation Speed:</label>
+        <div class="slider-container">
+          <input type="range" id="speed-control" min="0.1" max="1" step="0.1" value="0.5">
+          <div class="range-labels">
+            <span>Slow</span>
+            <span>Fast</span>
+          </div>
+        </div>
+      </div>
+      
+      <div class="control-group">
+        <label for="position-slider">Position:</label>
+        <div class="slider-container">
+          <input type="range" id="position-slider" min="0" max="100" step="0.1" value="0">
+          <div class="range-labels">
+            <span>Start</span>
+            <span>End</span>
+          </div>
+        </div>
+      </div>
+      
+      <div class="control-group" style="margin-top: 10px;">
+        <button id="start-btn">Start</button>
+        <button id="stop-btn" disabled>Pause</button>
+        <button id="reset-btn" disabled>Reset</button>
+      </div>
+    </div>
+    
+    <div id="map"></div>
+    
+    <div class="elevation-profile">
+      <canvas id="elevation-canvas"></canvas>
+      <div class="elevation-marker" id="elevation-marker" style="display: none;"></div>
+    </div>
+    
+    <div class="route-info">
+      <div class="info-header">
+        <h3>Route Information</h3>
+      </div>
+      <div class="info-grid">
+        <div class="info-item">
+          <div class="info-label">Total Distance</div>
+          <div class="info-value" id="total-distance">--</div>
+        </div>
+        <div class="info-item">
+          <div class="info-label">Distance Traveled</div>
+          <div class="info-value" id="distance-traveled">0.0 km</div>
+        </div>
+        <div class="info-item">
+          <div class="info-label">Elevation Gain</div>
+          <div class="info-value" id="elevation-gain">--</div>
+        </div>
+        <div class="info-item">
+          <div class="info-label">Current Elevation</div>
+          <div class="info-value" id="current-elevation">--</div>
+        </div>
+        <div class="info-item">
+          <div class="info-label">Current Gradient</div>
+          <div class="info-value" id="current-gradient">--</div>
+        </div>
+        <div class="info-item">
+          <div class="info-label">Progress</div>
+          <div class="info-value" id="progress">0%</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  
+  <div class="loading" id="loading">
+    <div class="loading-spinner"></div>
+    <p>Loading route data...</p>
+  </div>
+  
+  <script>
+    // Replace with your Mapbox access token
+    mapboxgl.accessToken = 'pk.eyJ1IjoiZWJvd21hbiIsImEiOiJjbWE1ZWVwdzYwODhwMmlzZnU4NTlyem1rIn0.E10X5hj2NTgViJexKpvrOg';
+    
+    // Global variables
+    let map;
+    let routeData = null;
+    let animationId = null;
+    let currentPoint = 0;
+    let elevationProfile = [];
+    let maxElevation = 0;
+    let minElevation = Infinity;
+    let totalDistance = 0;
+    let elevationGain = 0;
+    let routeCoordinates = [];
+    let routeDistances = []; // Array to store cumulative distances along route
+    let animationSpeed = 0.5;
+    let cameraHeight = 25; // Default camera height (slider position, not actual meters)
+    let currentRouteDistance = 0; // Current distance along route in meters
+    let totalDistanceMeters = 0; // Total distance of the route in meters
+    
+    // Pre-calculation variables to avoid real-time computation during animation
+    let preCalculatedSegments = {}; // Object map to store pre-calculated route segments with interpolation data
+    let preCalculatedLookAhead = {}; // Object to store pre-calculated look-ahead points for camera positioning
+    let lastPreCalcHeight = 0; // Track when we need to recalculate due to height changes
+    let stepSize = 0.5; // Default step size, will be updated during pre-calculation
+    let lookAheadInterval = 25; // Default look-ahead interval, will be updated during pre-calculation
+    
+    // Helper function to calculate segment data for any distance
+    function calculateSegmentForDistance(distanceKm) {
+      let beforeIdx = 0;
+      let afterIdx = 1;
+      let fraction = 0;
+      
+      // Find the segment for this distance
+      for (let i = 1; i < routeDistances.length; i++) {
+        if (routeDistances[i] >= distanceKm) {
+          afterIdx = i;
+          beforeIdx = i - 1;
+          break;
+        }
+      }
+      
+      // Calculate the fraction
+      const segmentLength = routeDistances[afterIdx] - routeDistances[beforeIdx];
+      if (segmentLength > 0) {
+        fraction = (distanceKm - routeDistances[beforeIdx]) / segmentLength;
+        fraction = Math.max(0, Math.min(1, fraction));
+      }
+      
+      return { beforeIdx, afterIdx, fraction };
+    }
+    
+    // DOM Elements
+    const routeSelect = document.getElementById('route-select');
+    const startBtn = document.getElementById('start-btn');
+    const stopBtn = document.getElementById('stop-btn');
+    const resetBtn = document.getElementById('reset-btn');
+    const speedControl = document.getElementById('speed-control');
+    const heightControl = document.getElementById('camera-height');
+    const positionSlider = document.getElementById('position-slider');
+    const elevationCanvas = document.getElementById('elevation-canvas');
+    const elevationMarker = document.getElementById('elevation-marker');
+    const totalDistanceEl = document.getElementById('total-distance');
+    const distanceTraveledEl = document.getElementById('distance-traveled');
+    const elevationGainEl = document.getElementById('elevation-gain');
+    const currentElevationEl = document.getElementById('current-elevation');
+    const currentGradientEl = document.getElementById('current-gradient');
+    const progressEl = document.getElementById('progress');
+    const loadingEl = document.getElementById('loading');
+    
+    // Initialize map
+    function initMap() {
+      map = new mapboxgl.Map({
+        container: 'map',
+        style: 'mapbox://styles/mapbox/satellite-streets-v12', // Fixed to Satellite with street overlay
+        center: [14.5, 46.05], // Ljubljana, Slovenia
+        zoom: 11,
+        pitch: 45,
+        bearing: 0
+      });
+      
+      // Global flag to track initialization
+      let mapInitialized = false;
+      
+      // Add terrain for 3D hills after style loads with fixed 1x exaggeration
+      map.on('style.load', () => {
+        addTerrainAndSources(1.0); // Lock terrain exaggeration to 1.0x
+      });
+      
+      map.on('load', () => {
+        // Initial terrain setup
+        addTerrainAndSources();
+        
+        if (!mapInitialized) {
+          // Load initial route (only once)
+          loadRoute(routeSelect.value, true); // Pass true to indicate initial load
+          mapInitialized = true;
+        }
+      });
+      
+      // Handle source errors by adding an error handler
+      map.on('error', (e) => {
+        // Only log to console, don't alert the user for common map errors
+        if (e.error && e.error.message && e.error.message.includes('There is already a source with this ID')) {
+          console.warn('Map source already exists - this is normal during style changes:', e.error.message);
+        } else {
+          console.error('Map error:', e.error);
+        }
+      });
+    }
+    
+    // Load GPX route
+    async function loadRoute(routeFile, applyInitialView = false) {
+      loadingEl.style.display = 'flex';
+      
+      try {
+        const response = await fetch(`gpx/${routeFile}`);
+        const gpxData = await response.text();
+        
+        // Parse GPX
+        const parser = new DOMParser();
+        const gpx = parser.parseFromString(gpxData, 'text/xml');
+        const trackPoints = gpx.querySelectorAll('trkpt');
+        
+        // Extract coordinates and elevation
+        routeCoordinates = [];
+        elevationProfile = [];
+        maxElevation = 0;
+        minElevation = Infinity;
+        let prevElevation = null;
+        elevationGain = 0;
+        
+        trackPoints.forEach(point => {
+          const lat = parseFloat(point.getAttribute('lat'));
+          const lon = parseFloat(point.getAttribute('lon'));
+          let ele = 0;
+          
+          const eleTag = point.querySelector('ele');
+          if (eleTag && eleTag.textContent) {
+            ele = parseFloat(eleTag.textContent);
+          }
+          
+          if (ele > maxElevation) maxElevation = ele;
+          if (ele < minElevation) minElevation = ele;
+          
+          if (prevElevation !== null && ele > prevElevation) {
+            elevationGain += (ele - prevElevation);
+          }
+          
+          prevElevation = ele;
+          
+          routeCoordinates.push([lon, lat, ele]);
+          elevationProfile.push(ele);
+        });
+        
+        // Calculate segment distances and cumulative distances
+        totalDistance = 0;
+        routeDistances = [0]; // Start with 0 for the first point
+        
+        for (let i = 1; i < routeCoordinates.length; i++) {
+          const from = turf.point([routeCoordinates[i-1][0], routeCoordinates[i-1][1]]);
+          const to = turf.point([routeCoordinates[i][0], routeCoordinates[i][1]]);
+          const segmentDistance = turf.distance(from, to, {units: 'kilometers'});
+          totalDistance += segmentDistance;
+          // Store cumulative distance at each point in kilometers
+          routeDistances.push(totalDistance);
+        }
+        
+        // Set the global total distance in meters
+        totalDistanceMeters = totalDistance * 1000;
+        
+        // Update route on map
+        const geojson = {
+          type: 'Feature',
+          properties: {},
+          geometry: {
+            type: 'LineString',
+            coordinates: routeCoordinates.map(coord => [coord[0], coord[1]])
+          }
+        };
+        
+        // Check if source exists before updating
+        try {
+          if (map.getSource('route')) {
+            map.getSource('route').setData(geojson);
+          } else {
+            // Add source and layer if they don't exist yet
+            map.addSource('route', {
+              type: 'geojson',
+              data: geojson
+            });
+            
+            map.addLayer({
+              id: 'route',
+              type: 'line',
+              source: 'route',
+              layout: {
+                'line-join': 'round',
+                'line-cap': 'round'
+              },
+              paint: {
+                'line-color': '#3498db',
+                'line-width': 5,
+                'line-opacity': 0.8
+              }
+            });
+          }
+          
+          // Initialize or update point location
+          if (map.getSource('point')) {
+            updatePointPosition(routeCoordinates[0]);
+          } else {
+            map.addSource('point', {
+              type: 'geojson',
+              data: {
+                type: 'Feature',
+                properties: {},
+                geometry: {
+                  type: 'Point',
+                  coordinates: [routeCoordinates[0][0], routeCoordinates[0][1]]
+                }
+              }
+            });
+            
+            map.addLayer({
+              id: 'point',
+              type: 'circle',
+              source: 'point',
+              paint: {
+                'circle-radius': 8,
+                'circle-color': '#e74c3c',
+                'circle-stroke-width': 2,
+                'circle-stroke-color': '#ffffff'
+              }
+            });
+          }
+        } catch (e) {
+          console.warn('Had to wait for map style to load:', e);
+          
+          // Wait for style to load and retry
+          map.once('style.load', () => {
+            // Add terrain, sources and layers again
+            addTerrainAndSources();
+            
+            // Now try to update data again
+            if (map.getSource('route')) {
+              map.getSource('route').setData(geojson);
+            }
+            
+            if (map.getSource('point')) {
+              updatePointPosition(routeCoordinates[0]);
+            }
+          });
+        }
+        
+        // Fit map to route
+        const bounds = new mapboxgl.LngLatBounds();
+        routeCoordinates.forEach(coord => {
+          bounds.extend([coord[0], coord[1]]);
+        });
+        map.fitBounds(bounds, { padding: 50 });
+        
+        // Update UI
+        totalDistanceEl.textContent = `${totalDistance.toFixed(1)} km`;
+        elevationGainEl.textContent = `${elevationGain.toFixed(0)} m`;
+        
+        // Draw elevation profile
+        drawElevationProfile();
+        
+        // Reset animation
+        resetAnimation();
+        
+        // Reset button text and position slider
+        startBtn.textContent = "Start";
+        positionSlider.value = 0;
+        
+        // Pre-calculate route data for smooth animation
+        preCalculateRouteData();
+        
+        // If requested, apply camera height to initial view
+        if (applyInitialView) {
+          updateInitialMapView();
+        }
+        
+        // Hide loading
+        loadingEl.style.display = 'none';
+      } catch (error) {
+        console.error('Error loading route:', error);
+        alert('Error loading route data. Please try again.');
+        loadingEl.style.display = 'none';
+      }
+    }
+    
+    // Draw elevation profile
+    function drawElevationProfile() {
+      const ctx = elevationCanvas.getContext('2d');
+      const width = elevationCanvas.clientWidth;
+      const height = elevationCanvas.clientHeight;
+      
+      // Set canvas dimensions
+      elevationCanvas.width = width;
+      elevationCanvas.height = height;
+      
+      // Clear canvas
+      ctx.clearRect(0, 0, width, height);
+      
+      // Calculate elevation range with padding
+      const padding = (maxElevation - minElevation) * 0.1;
+      const elevationMin = Math.max(0, minElevation - padding);
+      const elevationMax = maxElevation + padding;
+      const elevationRange = elevationMax - elevationMin;
+      
+      // Draw profile
+      ctx.beginPath();
+      ctx.moveTo(0, height - ((elevationProfile[0] - elevationMin) / elevationRange * height));
+      
+      for (let i = 1; i < elevationProfile.length; i++) {
+        const x = i / (elevationProfile.length - 1) * width;
+        const y = height - ((elevationProfile[i] - elevationMin) / elevationRange * height);
+        ctx.lineTo(x, y);
+      }
+      
+      // Close path at bottom
+      ctx.lineTo(width, height);
+      ctx.lineTo(0, height);
+      ctx.closePath();
+      
+      // Fill gradient
+      const gradient = ctx.createLinearGradient(0, 0, 0, height);
+      gradient.addColorStop(0, 'rgba(231, 76, 60, 0.7)');
+      gradient.addColorStop(0.5, 'rgba(41, 128, 185, 0.5)');
+      gradient.addColorStop(1, 'rgba(41, 128, 185, 0.2)');
+      ctx.fillStyle = gradient;
+      ctx.fill();
+      
+      // Draw outline
+      ctx.beginPath();
+      ctx.moveTo(0, height - ((elevationProfile[0] - elevationMin) / elevationRange * height));
+      
+      for (let i = 1; i < elevationProfile.length; i++) {
+        const x = i / (elevationProfile.length - 1) * width;
+        const y = height - ((elevationProfile[i] - elevationMin) / elevationRange * height);
+        ctx.lineTo(x, y);
+      }
+      
+      ctx.strokeStyle = '#3498db';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      
+      // Draw axes
+      ctx.beginPath();
+      ctx.moveTo(0, height);
+      ctx.lineTo(width, height);
+      ctx.strokeStyle = '#aaa';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      
+      // Draw labels
+      ctx.fillStyle = '#666';
+      ctx.font = '10px sans-serif';
+      ctx.fillText(`${Math.round(elevationMin)}m`, 5, height - 5);
+      ctx.fillText(`${Math.round(elevationMax)}m`, 5, 15);
+      ctx.fillText('0 km', 5, height - 20);
+      ctx.fillText(`${totalDistance.toFixed(1)} km`, width - 40, height - 20);
+    }
+    
+    // Update elevation marker
+    function updateElevationMarker(progress) {
+      const width = elevationCanvas.clientWidth;
+      const position = progress * width;
+      
+      elevationMarker.style.display = 'block';
+      elevationMarker.style.left = `${position}px`;
+    }
+    
+    // Variable to track animation state
+    let animationStopped = false;
+    
+    // Start or continue animation
+    function startAnimation() {
+      // Cancel any existing animation
+      if (animationId) {
+        cancelAnimationFrame(animationId);
+        animationId = null;
+      }
+      
+      // Safety check for route data
+      if (!routeCoordinates || routeCoordinates.length === 0) {
+        console.warn('Cannot start animation: No route data loaded');
+        alert('Please select a route first');
+        return;
+      }
+      
+      // Disable map interactions during animation
+      map.dragPan.disable();
+      map.scrollZoom.disable();
+      map.doubleClickZoom.disable();
+      map.touchZoomRotate.disable();
+      
+      // Disable controls during animation
+      startBtn.disabled = true;
+      stopBtn.disabled = false;
+      resetBtn.disabled = false;
+      positionSlider.disabled = true;
+      
+      // Reset to beginning if at end of route
+      if (currentRouteDistance >= routeDistances[routeDistances.length - 1] * 1000) {
+        currentPoint = 0;
+        currentPointFloat = 0;
+        currentRouteDistance = 0;
+        animationStopped = false;
+      }
+      
+      // Get the current animation mode (this is now updated live by the select element)
+      
+      // Only reset camera position if starting a new animation, not resuming from pause
+      // This ensures smooth transitions when resuming animation after using the slider
+      if (routeCoordinates.length > 0 && !animationStopped) {
+        // For brand new animation (not resume), initialize camera position
+        currentCameraPos = { 
+          lng: routeCoordinates[currentPoint][0], 
+          lat: routeCoordinates[currentPoint][1] 
+        };
+        targetCameraPos = { 
+          lng: routeCoordinates[currentPoint][0], 
+          lat: routeCoordinates[currentPoint][1] 
+        };
+        
+        // Calculate initial bearing if we have enough points
+        if (routeCoordinates.length > currentPoint + 1) {
+          const bearing = calculateBearing(
+            routeCoordinates[currentPoint], 
+            routeCoordinates[Math.min(currentPoint + 5, routeCoordinates.length - 1)]
+          );
+          currentCameraBearing = bearing;
+          targetCameraBearing = bearing;
+        } else {
+          currentCameraBearing = 0;
+          targetCameraBearing = 0;
+        }
+        
+        // Reset the look-ahead index
+        lastLookAheadIndex = currentPoint;
+      }
+      // When resuming from a pause (especially after slider adjustments),
+      // we don't reset camera position as it would cause a jump
+      
+      // Clear the stopped flag when starting again
+      animationStopped = false;
+      
+      // Start the animation
+      animateRoute();
+    }
+    
+    // Stop animation
+    function stopAnimation() {
+      if (animationId) {
+        cancelAnimationFrame(animationId);
+        animationId = null;
+      }
+      
+      // Re-enable map interactions when animation stops
+      map.dragPan.enable();
+      map.scrollZoom.enable();
+      map.doubleClickZoom.enable();
+      map.touchZoomRotate.enable();
+      
+      // Set the flag so we know animation was stopped mid-way
+      animationStopped = true;
+      
+      // Update button text to "Continue" if we're not at the end
+      if (currentRouteDistance < routeDistances[routeDistances.length - 1] * 1000) {
+        startBtn.textContent = "Continue";
+      }
+      
+      startBtn.disabled = false;
+      stopBtn.disabled = true;
+      resetBtn.disabled = false;
+      positionSlider.disabled = false;
+    }
+    
+    // Reset animation
+    function resetAnimation() {
+      if (animationId) {
+        cancelAnimationFrame(animationId);
+        animationId = null;
+      }
+      
+      // Ensure map interactions are enabled
+      map.dragPan.enable();
+      map.scrollZoom.enable();
+      map.doubleClickZoom.enable();
+      map.touchZoomRotate.enable();
+      
+      // Reset position counters
+      currentPoint = 0;
+      currentPointFloat = 0;
+      currentRouteDistance = 0;
+      
+      // Clear the stopped flag
+      animationStopped = false;
+      
+      // Reset Start button text
+      startBtn.textContent = "Start";
+      
+      if (routeCoordinates.length > 0) {
+        updatePointPosition(routeCoordinates[0]);
+        
+        // Reset camera and camera tracking variables
+        currentCameraPos = { 
+          lng: routeCoordinates[0][0], 
+          lat: routeCoordinates[0][1] 
+        };
+        targetCameraPos = { 
+          lng: routeCoordinates[0][0], 
+          lat: routeCoordinates[0][1] 
+        };
+        currentCameraBearing = 0;
+        targetCameraBearing = 0;
+        lastLookAheadIndex = 0;
+        
+        // Use current camera height to set initial view
+        updateInitialMapView();
+      }
+      
+      elevationMarker.style.display = 'none';
+      distanceTraveledEl.textContent = '0.0 km';
+      currentElevationEl.textContent = '–';
+      currentGradientEl.textContent = '–';
+      progressEl.textContent = '0%';
+      positionSlider.value = 0;
+      
+      startBtn.disabled = false;
+      stopBtn.disabled = true;
+      resetBtn.disabled = true;
+      positionSlider.disabled = false;
+    }
+    
+    // Function to update map view based on current camera height
+    function updateInitialMapView() {
+      if (routeCoordinates.length === 0) return;
+      
+      // Convert slider value (1-100) to actual camera parameters
+      // For a closer minimum zoom (2x closer) and less far maximum (2x closer)
+      const sliderMin = 1;
+      const sliderMax = 100;
+      
+      // Adjusted height range (2.5m to 250m - making closest view 2x closer than before)
+      const actualMinHeight = 2.5;  // 2x closer than before (was 5m)
+      const actualMaxHeight = 250;  // Keep this the same
+      
+      // Map slider value to actual height using exponential scale for better control
+      // This gives finer control at closer distances
+      const normalizedSliderValue = (cameraHeight - sliderMin) / (sliderMax - sliderMin);
+      const actualHeight = actualMinHeight * Math.pow(actualMaxHeight / actualMinHeight, normalizedSliderValue);
+      
+      // Zoom range (higher number = closer)
+      const minZoom = 17.5; // 2x closer minimum zoom (was 16.5)
+      const maxZoom = 11.5; // Keep maximum zoom the same
+      
+      // Calculate zoom level (logarithmic scale)
+      const zoomLevel = maxZoom + ((Math.log(actualMaxHeight) - Math.log(actualHeight)) / 
+                                  (Math.log(actualMaxHeight) - Math.log(actualMinHeight))) * (minZoom - maxZoom);
+      
+      // Calculate pitch based on height (more horizontal at low heights)
+      const minPitch = 40; // Even more horizontal at low height
+      const maxPitch = 75; // Less extreme at max height
+      const pitch = minPitch + normalizedSliderValue * (maxPitch - minPitch);
+      
+      // Apply the new view
+      map.flyTo({
+        center: [routeCoordinates[0][0], routeCoordinates[0][1]],
+        zoom: zoomLevel,
+        pitch: pitch,
+        bearing: 0
+      });
+    }
+    
+    // Global variables for camera smoothing
+    let currentCameraPos = { lng: 0, lat: 0 };
+    let currentCameraBearing = 0;
+    let targetCameraPos = { lng: 0, lat: 0 };
+    let targetCameraBearing = 0;
+    let lastLookAheadIndex = 0;
+    
+    // Add variable to track fractional position 
+    let currentPointFloat = 0;
+    
+    // Animate route
+    function animateRoute() {
+      // Safety check to avoid errors if route data isn't loaded
+      if (!routeCoordinates || routeCoordinates.length === 0 || !routeDistances || routeDistances.length === 0) {
+        stopAnimation();
+        console.warn('No route coordinates available for animation');
+        return;
+      }
+      
+      // Check if we've reached the end of the route
+      if (currentRouteDistance >= routeDistances[routeDistances.length - 1] * 1000) { // Convert km to m
+        stopAnimation();
+        // Reset button text to "Start" when animation completes
+        startBtn.textContent = "Start";
+        animationStopped = false;
+        
+        // Ensure map interactions are re-enabled at the end of animation
+        map.dragPan.enable();
+        map.scrollZoom.enable();
+        map.doubleClickZoom.enable();
+        map.touchZoomRotate.enable();
+        
+        // Enable position slider
+        positionSlider.disabled = false;
+        
+        return;
+      }
+      
+      // Speed in meters per frame - consistent regardless of point spacing
+      // animationSpeed is a multiplier (0.1 to 1.0)
+      // Base speed of 5 meters per frame * speed multiplier
+      const distanceIncrement = 5 * animationSpeed;
+      
+      // Update current distance along route
+      currentRouteDistance += distanceIncrement;
+      
+      // Use pre-calculated data if available, otherwise calculate on-the-fly
+      let interpolatedPoint, beforeIdx, afterIdx, fraction, lookAheadCoord, bearing;
+      
+      // Early return for start of route
+      if (currentRouteDistance <= 0) {
+        interpolatedPoint = routeCoordinates[0];
+        beforeIdx = 0;
+        afterIdx = 0;
+        fraction = 0;
+        currentPoint = 0;
+        currentPointFloat = 0;
+      } 
+      // Handle end of route
+      else if (currentRouteDistance >= routeDistances[routeDistances.length - 1] * 1000) {
+        interpolatedPoint = routeCoordinates[routeCoordinates.length - 1];
+        beforeIdx = routeCoordinates.length - 1;
+        afterIdx = routeCoordinates.length - 1;
+        fraction = 0;
+        currentPoint = routeCoordinates.length - 1;
+        currentPointFloat = routeCoordinates.length - 1;
+      }
+      // Normal case - find using pre-calculated data when possible
+      else {
+        // Check if we need to re-calculate due to camera height changes
+        if (Math.abs(cameraHeight - lastPreCalcHeight) > 10) {
+          // Wait until animation loop to avoid frame drop
+          setTimeout(() => preCalculateRouteData(), 0);
+        }
+        
+        // Use pre-calculated data from our optimized object map
+        if (preCalculatedSegments && Object.keys(preCalculatedSegments).length > 0) {
+          // Round to the nearest step size
+          const roundedDistance = Math.round(currentRouteDistance / stepSize) * stepSize;
+          
+          // Direct lookup by key - extremely fast, no search needed
+          const segment = preCalculatedSegments[roundedDistance];
+          
+          if (segment) {
+            // We have exact pre-calculated data for this distance
+            beforeIdx = segment.beforeIdx;
+            afterIdx = segment.afterIdx;
+            fraction = segment.fraction;
+            
+            // Calculate the interpolated point on-demand (saves memory)
+            const beforePoint = routeCoordinates[beforeIdx];
+            const afterPoint = routeCoordinates[afterIdx];
+            
+            interpolatedPoint = [
+              beforePoint[0] + (afterPoint[0] - beforePoint[0]) * fraction,
+              beforePoint[1] + (afterPoint[1] - beforePoint[1]) * fraction
+            ];
+            
+            // Include elevation if available
+            if (beforePoint.length > 2 && afterPoint.length > 2) {
+              interpolatedPoint[2] = beforePoint[2] + (afterPoint[2] - beforePoint[2]) * fraction;
+            }
+          } else {
+            // If exact distance not found, interpolate between nearby pre-calculated points
+            // Find the two closest pre-calculated distances
+            const distances = Object.keys(preCalculatedSegments).map(Number);
+            let prevDistance = 0;
+            let nextDistance = totalDistanceMeters;
+            
+            for (const d of distances) {
+              if (d <= roundedDistance && d > prevDistance) {
+                prevDistance = d;
+              }
+              if (d >= roundedDistance && d < nextDistance) {
+                nextDistance = d;
+              }
+            }
+            
+            // Simple linear interpolation between points
+            if (prevDistance > 0 && nextDistance < totalDistanceMeters) {
+              const prevSegment = preCalculatedSegments[prevDistance];
+              const nextSegment = preCalculatedSegments[nextDistance];
+              
+              // Interpolate between segments
+              const segmentFraction = (roundedDistance - prevDistance) / (nextDistance - prevDistance);
+              
+              // Interpolate between the GPX points from both segments
+              const prevPoint = routeCoordinates[prevSegment.beforeIdx];
+              const nextPoint = routeCoordinates[nextSegment.afterIdx];
+              
+              interpolatedPoint = [
+                prevPoint[0] + (nextPoint[0] - prevPoint[0]) * segmentFraction,
+                prevPoint[1] + (nextPoint[1] - prevPoint[1]) * segmentFraction
+              ];
+              
+              if (prevPoint.length > 2 && nextPoint.length > 2) {
+                interpolatedPoint[2] = prevPoint[2] + (nextPoint[2] - prevPoint[2]) * segmentFraction;
+              }
+              
+              beforeIdx = prevSegment.beforeIdx;
+              afterIdx = nextSegment.afterIdx;
+              fraction = segmentFraction;
+            } else {
+              // Fallback to calculation on-the-fly if interpolation not possible
+              // This should rarely happen with properly pre-calculated data
+              // Use the fallback calculation if needed
+              const distanceKm = currentRouteDistance / 1000;
+              const segment = calculateSegmentForDistance(distanceKm);
+              beforeIdx = segment.beforeIdx;
+              afterIdx = segment.afterIdx;
+              fraction = segment.fraction;
+              
+              const beforePoint = routeCoordinates[beforeIdx];
+              const afterPoint = routeCoordinates[afterIdx];
+              
+              interpolatedPoint = [
+                beforePoint[0] + (afterPoint[0] - beforePoint[0]) * fraction,
+                beforePoint[1] + (afterPoint[1] - beforePoint[1]) * fraction
+              ];
+              
+              if (beforePoint.length > 2 && afterPoint.length > 2) {
+                interpolatedPoint[2] = beforePoint[2] + (afterPoint[2] - beforePoint[2]) * fraction;
+              }
+            }
+          }
+          
+          // Update current point tracking for camera logic
+          currentPoint = beforeIdx;
+          currentPointFloat = beforeIdx + fraction;
+        }
+        else {
+          // Fallback to calculating on-the-fly if pre-calculation isn't ready
+          
+          // Convert current distance to km for comparison with routeDistances
+          const currentDistanceKm = currentRouteDistance / 1000;
+          
+          // Find the two points we're between
+          beforeIdx = 0;
+          afterIdx = 1;
+          
+          for (let i = 1; i < routeDistances.length; i++) {
+            if (routeDistances[i] >= currentDistanceKm) {
+              afterIdx = i;
+              beforeIdx = i - 1;
+              break;
+            }
+          }
+          
+          // Get the two points
+          const beforePoint = routeCoordinates[beforeIdx];
+          const afterPoint = routeCoordinates[afterIdx];
+          
+          // Safety check for valid coordinates
+          if (!beforePoint || beforePoint.length < 2 || !afterPoint || afterPoint.length < 2) {
+            console.warn('Invalid coordinates at indices', beforeIdx, afterIdx);
+            stopAnimation();
+            return;
+          }
+          
+          // Calculate interpolation fraction based on distance
+          const segmentLength = routeDistances[afterIdx] - routeDistances[beforeIdx];
+          fraction = 0;
+          
+          if (segmentLength > 0) {
+            fraction = (currentDistanceKm - routeDistances[beforeIdx]) / segmentLength;
+          }
+          
+          // Create interpolated point
+          interpolatedPoint = [
+            beforePoint[0] + (afterPoint[0] - beforePoint[0]) * fraction,
+            beforePoint[1] + (afterPoint[1] - beforePoint[1]) * fraction
+          ];
+          
+          // Include elevation if available
+          if (beforePoint.length > 2 && afterPoint.length > 2) {
+            interpolatedPoint[2] = beforePoint[2] + (afterPoint[2] - beforePoint[2]) * fraction;
+          }
+          
+          // Update current point tracking for camera logic
+          currentPoint = beforeIdx;
+          currentPointFloat = beforeIdx + fraction;
+        }
+      }
+      
+      // Update position now that we have the interpolated point
+      updatePointPosition(interpolatedPoint);
+      
+      // Calculate normalized height for look-ahead distance
+      const normalizedHeight = (cameraHeight - 1) / 99; // 0 to 1 range
+      
+      // Look-ahead distance in meters - shorter at lower heights
+      const lookAheadMeters = 15 + normalizedHeight * 85;
+      
+      // Use efficient object-map based look-ahead data with direct key lookup
+      // Round to the nearest interval to avoid any search operations
+      const roundedLookAheadDistance = Math.round((currentRouteDistance + lookAheadMeters) / lookAheadInterval) * lookAheadInterval;
+      
+      // Direct key lookup - this is extremely fast with no search needed
+      const lookAheadData = preCalculatedLookAhead[roundedLookAheadDistance];
+      
+      if (lookAheadData) {
+        // We have pre-calculated data for this exact interval
+        lookAheadCoord = lookAheadData.point;
+        bearing = lookAheadData.bearing;
+        lastLookAheadIndex = beforeIdx;
+      } 
+      else {
+        // If we don't have the exact interval, interpolate between neighboring intervals
+        // Find the two closest intervals
+        const exactLookAheadDistance = currentRouteDistance + lookAheadMeters;
+        const intervals = Object.keys(preCalculatedLookAhead).map(Number).sort((a, b) => a - b);
+        
+        if (intervals.length >= 2) {
+          // Find the two intervals that surround our target distance
+          let prevInterval = 0;
+          let nextInterval = totalDistanceMeters;
+          
+          for (const interval of intervals) {
+            if (interval <= exactLookAheadDistance && interval > prevInterval) {
+              prevInterval = interval;
+            }
+            if (interval >= exactLookAheadDistance && interval < nextInterval) {
+              nextInterval = interval;
+            }
+          }
+          
+          if (prevInterval > 0 && nextInterval < totalDistanceMeters &&
+              preCalculatedLookAhead[prevInterval] && preCalculatedLookAhead[nextInterval]) {
+            // We have data for both surrounding intervals
+            const intervalFraction = (exactLookAheadDistance - prevInterval) / (nextInterval - prevInterval);
+            
+            // Get the pre-calculated data
+            const prevLookAhead = preCalculatedLookAhead[prevInterval];
+            const nextLookAhead = preCalculatedLookAhead[nextInterval];
+            
+            // Interpolate position
+            lookAheadCoord = [
+              prevLookAhead.point[0] + (nextLookAhead.point[0] - prevLookAhead.point[0]) * intervalFraction,
+              prevLookAhead.point[1] + (nextLookAhead.point[1] - prevLookAhead.point[1]) * intervalFraction
+            ];
+            
+            // Interpolate bearing carefully to handle the 0°/360° boundary
+            let bearingDiff = nextLookAhead.bearing - prevLookAhead.bearing;
+            if (bearingDiff > 180) bearingDiff -= 360;
+            if (bearingDiff < -180) bearingDiff += 360;
+            
+            bearing = (prevLookAhead.bearing + bearingDiff * intervalFraction + 360) % 360;
+            lastLookAheadIndex = beforeIdx;
+          }
+          else if (preCalculatedLookAhead[prevInterval]) {
+            // Just use the previous interval data
+            lookAheadCoord = preCalculatedLookAhead[prevInterval].point;
+            bearing = preCalculatedLookAhead[prevInterval].bearing;
+            lastLookAheadIndex = beforeIdx;
+          }
+          else if (preCalculatedLookAhead[nextInterval]) {
+            // Just use the next interval data
+            lookAheadCoord = preCalculatedLookAhead[nextInterval].point;
+            bearing = preCalculatedLookAhead[nextInterval].bearing;
+            lastLookAheadIndex = beforeIdx;
+          }
+          else {
+            // Complete fallback to on-the-fly calculation
+            // For this edge case, use the helper function to calculate the segment
+            const lookAheadDistanceKm = (currentRouteDistance + lookAheadMeters) / 1000;
+            const segment = calculateSegmentForDistance(lookAheadDistanceKm);
+            
+            // Get the two points that bound our look-ahead distance
+            const lookBeforePoint = routeCoordinates[segment.beforeIdx];
+            const lookAfterPoint = routeCoordinates[segment.afterIdx];
+            
+            // Safety check for valid coordinates
+            if (!lookBeforePoint || lookBeforePoint.length < 2 || !lookAfterPoint || lookAfterPoint.length < 2) {
+              console.warn('Invalid look-ahead coordinates');
+              bearing = targetCameraBearing;
+              lookAheadCoord = [routeCoordinates[currentPoint][0], routeCoordinates[currentPoint][1]];
+            } else {
+              // Create interpolated look-ahead point
+              lookAheadCoord = [
+                lookBeforePoint[0] + (lookAfterPoint[0] - lookBeforePoint[0]) * segment.fraction,
+                lookBeforePoint[1] + (lookAfterPoint[1] - lookBeforePoint[1]) * segment.fraction
+              ];
+              
+              // Calculate bearing
+              if (segment.afterIdx < routeCoordinates.length - 1) {
+                const nextPoint = routeCoordinates[segment.afterIdx + 1];
+                bearing = calculateBearing(lookAheadCoord, nextPoint);
+              } else if (segment.beforeIdx > 0) {
+                const prevPoint = routeCoordinates[segment.beforeIdx - 1];
+                bearing = calculateBearing(prevPoint, lookAheadCoord);
+              } else {
+                bearing = targetCameraBearing; // Fallback
+              }
+            }
+            
+            // For tracking purposes
+            lastLookAheadIndex = segment.beforeIdx;
+          }
+        } else {
+          // Fallback if no pre-calculated data at all
+          // This should only happen during initial calculation
+          const lookAheadDistanceKm = (currentRouteDistance + lookAheadMeters) / 1000;
+          const segment = calculateSegmentForDistance(lookAheadDistanceKm);
+          
+          const lookBeforePoint = routeCoordinates[segment.beforeIdx];
+          const lookAfterPoint = routeCoordinates[segment.afterIdx];
+          
+          // Create interpolated look-ahead point
+          lookAheadCoord = [
+            lookBeforePoint[0] + (lookAfterPoint[0] - lookBeforePoint[0]) * segment.fraction,
+            lookBeforePoint[1] + (lookAfterPoint[1] - lookBeforePoint[1]) * segment.fraction
+          ];
+          
+          // Calculate simple bearing
+          bearing = calculateBearing(lookBeforePoint, lookAfterPoint);
+          lastLookAheadIndex = segment.beforeIdx;
+        }
+      }
+      
+      // Set the target bearing based on our calculated bearing
+      targetCameraBearing = bearing;
+      
+      // Set target position for the camera (this will be smoothly moved towards)
+      targetCameraPos = {
+        lng: lookAheadCoord[0],
+        lat: lookAheadCoord[1]
+      };
+      
+      // Use even lower smoothing factors for ultra-smooth transitions
+      // These very low values (0.01-0.04) create extremely gradual transitions
+      const positionSmoothingFactor = 0.04 - (normalizedHeight * 0.03); // Range from 0.04 to 0.01
+      const bearingSmoothingFactor = 0.03 - (normalizedHeight * 0.02); // Range from 0.03 to 0.01
+      
+      // Apply additional damping for higher camera positions (makes movement even smoother at height)
+      const damping = normalizedHeight * 0.5 + 0.5; // 0.5 to 1.0
+      
+      // Smooth position movement with EMA (Exponential Moving Average)
+      // Use a weighted blend of previous and target positions
+      
+      // Handle bearing smoothing with special care to avoid jumps across 0°/360° boundary
+      let bearingDiff = targetCameraBearing - currentCameraBearing;
+      
+      // Normalize the bearing difference to the range [-180, 180]
+      if (bearingDiff > 180) bearingDiff -= 360;
+      if (bearingDiff < -180) bearingDiff += 360;
+      
+      // Apply smoothing with damping
+      const effectivePositionSmoothing = positionSmoothingFactor * damping;
+      const effectiveBearingSmoothing = bearingSmoothingFactor * damping;
+      
+      // Smooth camera position movement with interpolation
+      currentCameraPos.lng += (targetCameraPos.lng - currentCameraPos.lng) * effectivePositionSmoothing;
+      currentCameraPos.lat += (targetCameraPos.lat - currentCameraPos.lat) * effectivePositionSmoothing;
+      currentCameraBearing += bearingDiff * effectiveBearingSmoothing;
+      
+      // Normalize bearing to [0, 360) range
+      currentCameraBearing = (currentCameraBearing + 360) % 360;
+      
+      // Drone flyover mode with adjustable height
+      
+      // Convert slider value (1-100) to actual camera parameters
+      // For a closer minimum zoom (2x closer) and less far maximum (2x closer)
+      const sliderMin = 1;
+      const sliderMax = 100;
+      
+      // Adjusted height range (2.5m to 250m - making closest view 2x closer than before)
+      const actualMinHeight = 2.5;  // 2x closer than before (was 5m)
+      const actualMaxHeight = 250;  // Keep this the same
+      
+      // Map slider value to actual height using exponential scale for better control
+      const normalizedSliderValue = (cameraHeight - sliderMin) / (sliderMax - sliderMin);
+      const actualHeight = actualMinHeight * Math.pow(actualMaxHeight / actualMinHeight, normalizedSliderValue);
+      
+      // Zoom range (higher number = closer)
+      const minZoom = 17.5; // 2x closer minimum zoom (was 16.5)
+      const maxZoom = 11.5; // Keep maximum zoom the same
+      
+      // Calculate zoom using the actual height
+      const zoomLevel = maxZoom + ((Math.log(actualMaxHeight) - Math.log(actualHeight)) / 
+                                 (Math.log(actualMaxHeight) - Math.log(actualMinHeight))) * (minZoom - maxZoom);
+      
+      // Calculate pitch based on normalized slider value (more horizontal at low heights)
+      const minPitch = 40; // More horizontal view at low height
+      const maxPitch = 75; // Less extreme at high height
+      const pitch = minPitch + normalizedSliderValue * (maxPitch - minPitch);
+      
+      // Position camera behind the rider
+      // This creates a true "following drone" perspective from any height
+      let cameraCenter;
+      
+      // Calculate the distance to position the camera behind based on actual height
+      // Higher = further back, using normalized slider value for a smooth progression
+      const behindDistance = 0.0002 + normalizedSliderValue * 0.0012;
+      
+      // Position directly behind by using the opposite of the travel direction
+      const behindAngle = (currentCameraBearing + 180) % 360; // 180 degrees opposite of travel direction
+      
+      // Calculate position behind the rider
+      const behindAngleRad = behindAngle * Math.PI / 180;
+      cameraCenter = {
+        lng: currentCameraPos.lng + behindDistance * Math.sin(behindAngleRad),
+        lat: currentCameraPos.lat + behindDistance * Math.cos(behindAngleRad)
+      };
+      
+      map.jumpTo({
+        center: [cameraCenter.lng, cameraCenter.lat], 
+        bearing: currentCameraBearing,
+        pitch: pitch,
+        zoom: zoomLevel
+      });
+      
+      // Update UI
+      updateProgress();
+      
+      // Continue animation
+      animationId = requestAnimationFrame(animateRoute);
+    }
+    
+    // Calculate perpendicular offset for drone view
+    function calculatePerpendicularOffset(point, bearing, distance) {
+      // Convert bearing to radians and add 90 degrees to get perpendicular
+      const perpBearing = ((bearing + 90) % 360) * Math.PI / 180;
+      
+      // Calculate offset
+      return {
+        lng: point.lng + distance * Math.sin(perpBearing),
+        lat: point.lat + distance * Math.cos(perpBearing)
+      };
+    }
+    
+    // Update point position
+    function updatePointPosition(coord) {
+      // Safety check to prevent errors
+      if (!coord || !Array.isArray(coord) || coord.length < 2) {
+        console.warn('Invalid coordinate passed to updatePointPosition:', coord);
+        return;
+      }
+      
+      const point = {
+        type: 'Feature',
+        properties: {},
+        geometry: {
+          type: 'Point',
+          coordinates: [coord[0], coord[1]]
+        }
+      };
+      
+      // Check if the map and source exist before updating
+      if (map && map.getSource('point')) {
+        try {
+          map.getSource('point').setData(point);
+        } catch (e) {
+          console.warn('Error updating point position:', e);
+        }
+      }
+    }
+    
+    // Calculate bearing between two coordinates
+    function calculateBearing(start, end) {
+      // Safety check for invalid coordinates
+      if (!start || !end || !Array.isArray(start) || !Array.isArray(end) || 
+          start.length < 2 || end.length < 2) {
+        console.warn('Invalid coordinates for bearing calculation:', start, end);
+        return 0; // Default bearing
+      }
+      
+      try {
+        const startLat = start[1] * Math.PI / 180;
+        const startLng = start[0] * Math.PI / 180;
+        const endLat = end[1] * Math.PI / 180;
+        const endLng = end[0] * Math.PI / 180;
+        
+        const y = Math.sin(endLng - startLng) * Math.cos(endLat);
+        const x = Math.cos(startLat) * Math.sin(endLat) - 
+                  Math.sin(startLat) * Math.cos(endLat) * Math.cos(endLng - startLng);
+        
+        const bearing = Math.atan2(y, x) * 180 / Math.PI;
+        return (bearing + 360) % 360;
+      } catch (e) {
+        console.warn('Error calculating bearing:', e);
+        return 0; // Default bearing on error
+      }
+    }
+    
+    // Update progress and UI
+    function updateProgress() {
+      if (routeCoordinates.length === 0 || routeDistances.length === 0) return;
+      
+      // Calculate progress percentage based on distance
+      const totalDistanceMeters = routeDistances[routeDistances.length - 1] * 1000; // km to m
+      const progress = currentRouteDistance / totalDistanceMeters;
+      
+      // Update progress element
+      progressEl.textContent = `${Math.round(progress * 100)}%`;
+      
+      // Update distance traveled
+      distanceTraveledEl.textContent = `${(currentRouteDistance / 1000).toFixed(1)} km`;
+      
+      // Update position slider without triggering its change event
+      positionSlider.value = progress * 100;
+      
+      // Update elevation marker
+      updateElevationMarker(progress);
+      
+      // Get current and next points for interpolation
+      const currentIdx = Math.floor(currentPointFloat);
+      const nextIdx = Math.min(currentIdx + 1, routeCoordinates.length - 1);
+      const pointFraction = currentPointFloat - currentIdx;
+      
+      // Get interpolated elevation
+      let currentElevation;
+      if (routeCoordinates[currentIdx].length > 2 && routeCoordinates[nextIdx].length > 2) {
+        currentElevation = routeCoordinates[currentIdx][2] + 
+                          (routeCoordinates[nextIdx][2] - routeCoordinates[currentIdx][2]) * pointFraction;
+      } else {
+        currentElevation = routeCoordinates[currentIdx][2] || 0;
+      }
+      
+      currentElevationEl.textContent = `${Math.round(currentElevation)} m`;
+      
+      // Calculate gradient using about 100m look-behind distance
+      // Find a point ~100m back from our current position
+      let lookBehindDistance = Math.max(0, currentRouteDistance - 100); // meters
+      let lookBehindDistanceKm = lookBehindDistance / 1000;
+      let prevPointIdx = 0;
+      
+      // Find the closest point for our look-behind distance
+      for (let i = 0; i < routeDistances.length; i++) {
+        if (routeDistances[i] >= lookBehindDistanceKm) {
+          prevPointIdx = Math.max(0, i - 1);
+          break;
+        }
+      }
+      
+      // Calculate the elevation change over this distance
+      const prevElevation = routeCoordinates[prevPointIdx][2] || 0;
+      const elevationChange = currentElevation - prevElevation;
+      
+      // Calculate the actual distance between these points
+      const actualDistance = (currentRouteDistance - (routeDistances[prevPointIdx] * 1000)); // in meters
+      
+      if (actualDistance > 10) { // Only calculate gradient if we have sufficient distance
+        const gradient = (elevationChange / actualDistance) * 100;
+        currentGradientEl.textContent = `${gradient.toFixed(1)}%`;
+        
+        // Change gradient text color based on steepness
+        if (gradient > 8) {
+          currentGradientEl.style.color = '#e74c3c'; // Steep - red
+        } else if (gradient > 4) {
+          currentGradientEl.style.color = '#f39c12'; // Moderate - orange
+        } else if (gradient < -4) {
+          currentGradientEl.style.color = '#2ecc71'; // Descent - green
+        } else {
+          currentGradientEl.style.color = '#2c3e50'; // Flat - default
+        }
+      }
+    }
+    
+    // Add terrain and common sources/layers function
+    function addTerrainAndSources(exaggerationValue = 1.0) {
+      try {
+        // Add terrain source if it doesn't exist
+        if (!map.getSource('mapbox-dem')) {
+          map.addSource('mapbox-dem', {
+            'type': 'raster-dem',
+            'url': 'mapbox://mapbox.mapbox-terrain-dem-v1',
+            'tileSize': 512,
+            'maxzoom': 14
+          });
+        }
+        
+        // Add sky layer if it doesn't exist
+        if (!map.getLayer('sky')) {
+          map.addLayer({
+            'id': 'sky',
+            'type': 'sky',
+            'paint': {
+              'sky-type': 'atmosphere',
+              'sky-atmosphere-sun': [0.0, 0.0],
+              'sky-atmosphere-sun-intensity': 15
+            }
+          });
+        }
+        
+        // Use fixed 1.0 terrain exaggeration - no slider adjustment
+        const exaggeration = exaggerationValue;
+        
+        // Add 3D terrain
+        map.setTerrain({ 'source': 'mapbox-dem', 'exaggeration': exaggeration });
+        
+        // Add route source and layer if needed
+        if (!map.getSource('route') && routeCoordinates.length > 0) {
+          map.addSource('route', {
+            type: 'geojson',
+            data: {
+              type: 'Feature',
+              properties: {},
+              geometry: {
+                type: 'LineString',
+                coordinates: routeCoordinates.map(coord => [coord[0], coord[1]])
+              }
+            }
+          });
+          
+          map.addLayer({
+            id: 'route',
+            type: 'line',
+            source: 'route',
+            layout: {
+              'line-join': 'round',
+              'line-cap': 'round'
+            },
+            paint: {
+              'line-color': '#3498db',
+              'line-width': 5,
+              'line-opacity': 0.8
+            }
+          });
+        }
+        
+        // Add point source and layer if needed
+        if (!map.getSource('point') && routeCoordinates.length > 0) {
+          map.addSource('point', {
+            type: 'geojson',
+            data: {
+              type: 'Feature',
+              properties: {},
+              geometry: {
+                type: 'Point',
+                coordinates: [routeCoordinates[currentPoint][0], routeCoordinates[currentPoint][1]]
+              }
+            }
+          });
+          
+          map.addLayer({
+            id: 'point',
+            type: 'circle',
+            source: 'point',
+            paint: {
+              'circle-radius': 8,
+              'circle-color': '#e74c3c',
+              'circle-stroke-width': 2,
+              'circle-stroke-color': '#ffffff'
+            }
+          });
+        }
+      } catch (e) {
+        console.warn('Error adding terrain or sources:', e);
+      }
+    }
+  
+    // Map style is fixed to Satellite with Streets
+    
+    // Terrain exaggeration is now fixed at 1.0x - function removed
+    
+    // Pre-calculate route segments and look-ahead data more efficiently
+    function preCalculateRouteData() {
+      if (!routeCoordinates || routeCoordinates.length === 0 || !routeDistances || routeDistances.length === 0) {
+        return;
+      }
+      
+      console.time('Route pre-calculation');
+      
+      // Store current camera height for tracking changes
+      lastPreCalcHeight = cameraHeight;
+      
+      // Adjust calculation strategy based on route length
+      const isLongRoute = totalDistanceMeters > 50000;
+      
+      // Set global step sizes
+      stepSize = isLongRoute ? 10 : 1; // Use coarser steps to avoid memory issues
+      lookAheadInterval = isLongRoute ? 100 : 50; // Reduced density for better performance
+      
+      // Calculate normalized height once
+      const normalizedHeight = (cameraHeight - 1) / 99;
+      const lookAheadMeters = 15 + normalizedHeight * 85;
+      
+      // Instead of calculating all points in one go (which can cause GC pauses),
+      // we'll create a more memory-efficient data structure - an index-based map
+      
+      // Clear previous calculations and create map-based structures instead of arrays
+      preCalculatedSegments = {};
+      preCalculatedLookAhead = {};
+      
+      // Optimize by pre-building an index of distances to route points
+      // This avoids the repeated linear search that was likely causing pauses
+      const distanceIndex = [];
+      for (let i = 0; i < routeDistances.length; i++) {
+        distanceIndex.push({
+          distance: routeDistances[i], 
+          index: i
+        });
+      }
+      
+      // Highly optimized segment lookup function to replace the linear search
+      const findSegmentForDistance = (distanceKm) => {
+        // Binary search for faster lookup
+        let start = 0;
+        let end = distanceIndex.length - 1;
+        
+        // Handle edge cases
+        if (distanceKm <= distanceIndex[0].distance) return { beforeIdx: 0, afterIdx: 1, fraction: 0 };
+        if (distanceKm >= distanceIndex[end].distance) return { beforeIdx: end-1, afterIdx: end, fraction: 1 };
+        
+        // Binary search
+        while (start <= end) {
+          const mid = Math.floor((start + end) / 2);
+          
+          if (distanceIndex[mid].distance === distanceKm) {
+            return { 
+              beforeIdx: mid, 
+              afterIdx: Math.min(mid + 1, distanceIndex.length - 1),
+              fraction: 0 
+            };
+          }
+          
+          if (distanceIndex[mid].distance < distanceKm) {
+            if (mid < distanceIndex.length - 1 && distanceIndex[mid + 1].distance > distanceKm) {
+              // Found the segment
+              const beforeIdx = distanceIndex[mid].index;
+              const afterIdx = distanceIndex[mid + 1].index;
+              const segmentLength = distanceIndex[mid + 1].distance - distanceIndex[mid].distance;
+              let fraction = 0;
+              if (segmentLength > 0) {
+                fraction = (distanceKm - distanceIndex[mid].distance) / segmentLength;
+                fraction = Math.max(0, Math.min(1, fraction));
+              }
+              return { beforeIdx, afterIdx, fraction };
+            }
+            start = mid + 1;
+          } else {
+            end = mid - 1;
+          }
+        }
+        
+        // Fallback if binary search fails
+        for (let i = 0; i < distanceIndex.length - 1; i++) {
+          if (distanceIndex[i].distance <= distanceKm && distanceIndex[i + 1].distance >= distanceKm) {
+            const beforeIdx = distanceIndex[i].index;
+            const afterIdx = distanceIndex[i + 1].index;
+            const segmentLength = distanceIndex[i + 1].distance - distanceIndex[i].distance;
+            let fraction = 0;
+            if (segmentLength > 0) {
+              fraction = (distanceKm - distanceIndex[i].distance) / segmentLength;
+              fraction = Math.max(0, Math.min(1, fraction));
+            }
+            return { beforeIdx, afterIdx, fraction };
+          }
+        }
+        
+        // Last resort fallback
+        return { beforeIdx: 0, afterIdx: 1, fraction: 0 };
+      };
+      
+      // Function to calculate interpolated point
+      const interpolatePoint = (beforeIdx, afterIdx, fraction) => {
+        const beforePoint = routeCoordinates[beforeIdx];
+        const afterPoint = routeCoordinates[afterIdx];
+        
+        const interpolatedPoint = [
+          beforePoint[0] + (afterPoint[0] - beforePoint[0]) * fraction,
+          beforePoint[1] + (afterPoint[1] - beforePoint[1]) * fraction
+        ];
+        
+        // Include elevation if available
+        if (beforePoint.length > 2 && afterPoint.length > 2) {
+          interpolatedPoint[2] = beforePoint[2] + (afterPoint[2] - beforePoint[2]) * fraction;
+        }
+        
+        return interpolatedPoint;
+      };
+      
+      // Pre-calculate in chunks to avoid long GC pauses
+      const chunkSize = 10000; // Process in chunks to avoid GC pauses
+      const chunkCount = Math.ceil(totalDistanceMeters / chunkSize);
+      
+      // Process each chunk one frame at a time to avoid blocking the UI
+      let currentChunk = 0;
+      
+      const processNextChunk = () => {
+        if (currentChunk >= chunkCount) {
+          console.timeEnd('Route pre-calculation');
+          console.log(`Pre-calculated segments for ${totalDistanceMeters.toFixed(0)}m route with step size ${stepSize}m`);
+          return;
+        }
+        
+        const startDistance = currentChunk * chunkSize;
+        const endDistance = Math.min((currentChunk + 1) * chunkSize, totalDistanceMeters);
+        
+        // Pre-calculate points at regular intervals
+        for (let distance = startDistance; distance <= endDistance; distance += stepSize) {
+          // Convert to km for route lookup
+          const distanceKm = distance / 1000;
+          
+          // Fast segment lookup
+          const { beforeIdx, afterIdx, fraction } = findSegmentForDistance(distanceKm);
+          
+          // Store minimal data in an object map (more efficient than array)
+          // Store by key for direct indexing rather than searching
+          preCalculatedSegments[distance] = {
+            beforeIdx,
+            afterIdx, 
+            fraction
+          };
+          
+          // Pre-calculate camera look-ahead data at regular intervals
+          if (distance % lookAheadInterval === 0) {
+            const lookAheadDistance = distance + lookAheadMeters;
+            const lookAheadDistanceKm = lookAheadDistance / 1000;
+            
+            // Use the same optimized segment finder
+            const lookAhead = findSegmentForDistance(lookAheadDistanceKm);
+            
+            // Calculate the interpolated look-ahead point
+            const lookAheadPoint = interpolatePoint(
+              lookAhead.beforeIdx, 
+              lookAhead.afterIdx, 
+              lookAhead.fraction
+            );
+            
+            // Calculate bearing (optimized to avoid duplicate calculations)
+            let bearing = 0;
+            const nextIdx = Math.min(lookAhead.afterIdx + 1, routeCoordinates.length - 1);
+            if (nextIdx !== lookAhead.afterIdx) {
+              bearing = calculateBearing(lookAheadPoint, routeCoordinates[nextIdx]);
+            } else if (lookAhead.beforeIdx > 0) {
+              bearing = calculateBearing(routeCoordinates[lookAhead.beforeIdx - 1], lookAheadPoint);
+            }
+            
+            // Store look-ahead data
+            preCalculatedLookAhead[distance] = {
+              point: lookAheadPoint,
+              bearing: bearing
+            };
+          }
+        }
+        
+        currentChunk++;
+        
+        // Process next chunk on next frame to avoid blocking
+        requestAnimationFrame(processNextChunk);
+      };
+      
+      // Start processing the first chunk
+      processNextChunk();
+    }
+  
+    // Event listeners
+    document.addEventListener('DOMContentLoaded', () => {
+      initMap();
+      
+      routeSelect.addEventListener('change', () => {
+        loadRoute(routeSelect.value, true); // Apply camera height immediately on route change
+      });
+      
+      startBtn.addEventListener('click', startAnimation);
+      stopBtn.addEventListener('click', stopAnimation);
+      resetBtn.addEventListener('click', resetAnimation);
+      
+      // Map style is fixed to Satellite with Streets
+      
+      // Terrain exaggeration is now fixed at 1.0x - no handler needed
+      
+      // Camera height handler - updates view immediately
+      heightControl.addEventListener('input', () => {
+        cameraHeight = parseInt(heightControl.value);
+        
+        // If animation is not running, update the view immediately
+        if (!animationId && routeCoordinates.length > 0) {
+          updateInitialMapView();
+        }
+        
+        // Only recalculate if the height has changed significantly
+        if (Math.abs(cameraHeight - lastPreCalcHeight) > 10) {
+          // Wait a short delay if the user is actively adjusting the slider
+          setTimeout(() => {
+            // Only recalculate if the height hasn't changed again during the delay
+            if (Math.abs(cameraHeight - lastPreCalcHeight) > 10) {
+              preCalculateRouteData();
+            }
+          }, 500);
+        }
+      });
+      
+      
+      speedControl.addEventListener('input', () => {
+        animationSpeed = parseFloat(speedControl.value);
+      });
+      
+      // Position slider handler
+      positionSlider.addEventListener('input', () => {
+        // Only allow manual positioning when animation is not running
+        if (!animationId) {
+          const positionPercent = parseFloat(positionSlider.value) / 100;
+          updatePositionManually(positionPercent);
+        }
+      });
+    });
+    
+    // Function to manually update position based on slider
+    function updatePositionManually(positionPercent) {
+      // Safety check
+      if (!routeCoordinates || routeCoordinates.length === 0 || !routeDistances || routeDistances.length === 0) {
+        return;
+      }
+      
+      // Calculate the distance along the route
+      const totalDistanceMeters = routeDistances[routeDistances.length - 1] * 1000; // km to m
+      currentRouteDistance = positionPercent * totalDistanceMeters;
+      
+      // Convert current distance to km for comparison with routeDistances
+      const currentDistanceKm = currentRouteDistance / 1000;
+      
+      // Find the two points that our current distance falls between
+      let beforeIdx = 0;
+      let afterIdx = 1;
+      
+      // Find the segment containing our position
+      for (let i = 1; i < routeDistances.length; i++) {
+        if (routeDistances[i] >= currentDistanceKm) {
+          afterIdx = i;
+          beforeIdx = i - 1;
+          break;
+        }
+      }
+      
+      // Get the two points
+      const beforePoint = routeCoordinates[beforeIdx];
+      const afterPoint = routeCoordinates[afterIdx];
+      
+      // Calculate interpolation fraction based on distance
+      const segmentLength = routeDistances[afterIdx] - routeDistances[beforeIdx];
+      let fraction = 0;
+      
+      if (segmentLength > 0) {
+        fraction = (currentDistanceKm - routeDistances[beforeIdx]) / segmentLength;
+        // Clamp to valid range
+        fraction = Math.max(0, Math.min(1, fraction));
+      }
+      
+      // Create interpolated point
+      const interpolatedPoint = [
+        beforePoint[0] + (afterPoint[0] - beforePoint[0]) * fraction,
+        beforePoint[1] + (afterPoint[1] - beforePoint[1]) * fraction
+      ];
+      
+      // Include elevation if available
+      if (beforePoint.length > 2 && afterPoint.length > 2) {
+        interpolatedPoint[2] = beforePoint[2] + (afterPoint[2] - beforePoint[2]) * fraction;
+      }
+      
+      // Update rider position
+      updatePointPosition(interpolatedPoint);
+      
+      // Update current tracking point indices
+      currentPoint = beforeIdx;
+      currentPointFloat = beforeIdx + fraction;
+      
+      // Calculate camera position using the same logic as during animation
+      
+      // For camera positioning, we'll use distance-based look-ahead like during animation
+      // Determine look-ahead distance in meters based on camera height
+      const normalizedHeight = (cameraHeight - 1) / 99; // 0 to 1 range
+      const lookAheadMeters = 15 + normalizedHeight * 85;
+      
+      // Calculate target position for camera based on current position + look-ahead distance
+      const lookAheadDistanceKm = (currentRouteDistance + lookAheadMeters) / 1000;
+      
+      // Find the camera position using the same approach as in animation
+      let lookBeforeIdx = beforeIdx;
+      let lookAfterIdx = afterIdx;
+      
+      // Find the segment containing our look-ahead position
+      for (let i = beforeIdx + 1; i < routeDistances.length; i++) {
+        if (routeDistances[i] >= lookAheadDistanceKm) {
+          lookAfterIdx = i;
+          lookBeforeIdx = i - 1;
+          break;
+        }
+      }
+      
+      // Cap at the end of the route
+      if (lookBeforeIdx >= routeCoordinates.length - 1) {
+        lookBeforeIdx = routeCoordinates.length - 2;
+        lookAfterIdx = routeCoordinates.length - 1;
+      }
+      
+      // Get the points to interpolate between
+      const lookBeforePoint = routeCoordinates[lookBeforeIdx];
+      const lookAfterPoint = routeCoordinates[lookAfterIdx];
+      
+      // Calculate interpolation fraction based on distance
+      const lookAheadSegmentLength = routeDistances[lookAfterIdx] - routeDistances[lookBeforeIdx];
+      let lookAheadFraction = 0;
+      
+      if (lookAheadSegmentLength > 0) {
+        lookAheadFraction = (lookAheadDistanceKm - routeDistances[lookBeforeIdx]) / lookAheadSegmentLength;
+        // Clamp to valid range
+        lookAheadFraction = Math.max(0, Math.min(1, lookAheadFraction));
+      }
+      
+      // Create interpolated look-ahead point
+      const lookAheadCoord = [
+        lookBeforePoint[0] + (lookAfterPoint[0] - lookBeforePoint[0]) * lookAheadFraction,
+        lookBeforePoint[1] + (lookAfterPoint[1] - lookBeforePoint[1]) * lookAheadFraction
+      ];
+      
+      // Calculate bearing to next segment
+      let bearing = 0;
+      if (lookAfterIdx < routeCoordinates.length - 1) {
+        // Use the bearing toward the next segment
+        const nextPoint = routeCoordinates[lookAfterIdx + 1];
+        bearing = calculateBearing(lookAheadCoord, nextPoint);
+      } else if (beforeIdx > 0) {
+        // Near the end, use the bearing from the previous segment
+        const prevPoint = routeCoordinates[beforeIdx - 1];
+        bearing = calculateBearing(prevPoint, interpolatedPoint);
+      }
+      
+      // Update the camera tracking values to maintain camera continuity when animation resumes
+      currentCameraPos = { 
+        lng: lookAheadCoord[0], 
+        lat: lookAheadCoord[1] 
+      };
+      targetCameraPos = { 
+        lng: lookAheadCoord[0], 
+        lat: lookAheadCoord[1] 
+      };
+      currentCameraBearing = bearing;
+      targetCameraBearing = bearing;
+      lastLookAheadIndex = lookBeforeIdx;
+      
+      // Calculate camera parameters to match animation
+      // Drone flyover mode with adjustable height
+      const sliderMin = 1;
+      const sliderMax = 100;
+      
+      // Use same height calculation as animation
+      const actualMinHeight = 2.5;
+      const actualMaxHeight = 250;
+      const normalizedSliderValue = (cameraHeight - sliderMin) / (sliderMax - sliderMin);
+      const actualHeight = actualMinHeight * Math.pow(actualMaxHeight / actualMinHeight, normalizedSliderValue);
+      
+      // Calculate zoom using the actual height
+      const minZoom = 17.5;
+      const maxZoom = 11.5;
+      const zoomLevel = maxZoom + ((Math.log(actualMaxHeight) - Math.log(actualHeight)) / 
+                               (Math.log(actualMaxHeight) - Math.log(actualMinHeight))) * (minZoom - maxZoom);
+      
+      // Calculate pitch based on normalized slider value (more horizontal at low heights)
+      const minPitch = 40;
+      const maxPitch = 75;
+      const pitch = minPitch + normalizedSliderValue * (maxPitch - minPitch);
+      
+      // Position camera behind the rider - same as in animation
+      const behindDistance = 0.0002 + normalizedSliderValue * 0.0012;
+      const behindAngle = (bearing + 180) % 360; // 180 degrees opposite of travel direction
+      const behindAngleRad = behindAngle * Math.PI / 180;
+      
+      const cameraCenter = {
+        lng: currentCameraPos.lng + behindDistance * Math.sin(behindAngleRad),
+        lat: currentCameraPos.lat + behindDistance * Math.cos(behindAngleRad)
+      };
+      
+      // Use a longer flyTo duration for smoother transitions when using the slider
+      // The increased duration creates much smoother visual transitions
+      map.flyTo({
+        center: [cameraCenter.lng, cameraCenter.lat], 
+        bearing: bearing,
+        pitch: pitch,
+        zoom: zoomLevel,
+        duration: 800, // Use a longer duration for smoother motion with the slider
+        essential: true, // animation will not be interrupted by map movement
+        curve: 1.42, // Use a more natural movement curve (the default is 1.42)
+        easing: function(t) {
+          // Custom easing function for smoother transitions
+          // This is a modified quadratic ease-out that produces more uniform motion
+          return t * (2 - t);
+        }
+      });
+      
+      // Update UI
+      updateProgress();
+    }
+  </script>
+</body>
+</html>
