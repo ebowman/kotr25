@@ -1202,25 +1202,47 @@
         
         // Skip first 500m of both routes as they're almost certainly the same
         const initialSkipDistance = 0.5; // 500m
+        const minDecisionDistance = 1.0; // Only consider divergence points after 1km
         let shortStartIdx = 0;
         let longStartIdx = 0;
-        let distanceSoFar = 0;
+        let shortDistanceSoFar = 0;
+        let longDistanceSoFar = 0;
         
         // Find starting point on short route (500m in)
-        for (let i = 1; i < shortCoords.length && distanceSoFar < initialSkipDistance; i++) {
+        for (let i = 1; i < shortCoords.length && shortDistanceSoFar < initialSkipDistance; i++) {
           const from = turf.point([shortCoords[i-1][0], shortCoords[i-1][1]]);
           const to = turf.point([shortCoords[i][0], shortCoords[i][1]]);
-          distanceSoFar += turf.distance(from, to, {units: 'kilometers'});
+          shortDistanceSoFar += turf.distance(from, to, {units: 'kilometers'});
           shortStartIdx = i;
         }
         
-        // Reset and find starting point on long route (500m in)
-        distanceSoFar = 0;
-        for (let i = 1; i < longCoords.length && distanceSoFar < initialSkipDistance; i++) {
+        // Find starting point on long route (500m in)
+        for (let i = 1; i < longCoords.length && longDistanceSoFar < initialSkipDistance; i++) {
           const from = turf.point([longCoords[i-1][0], longCoords[i-1][1]]);
           const to = turf.point([longCoords[i][0], longCoords[i][1]]);
-          distanceSoFar += turf.distance(from, to, {units: 'kilometers'});
+          longDistanceSoFar += turf.distance(from, to, {units: 'kilometers'});
           longStartIdx = i;
+        }
+        
+        // Calculate cumulative distance arrays for both routes
+        // This will help us track how far along the routes we are
+        const shortCumulativeDistances = [0]; // Start with 0 for first point
+        const longCumulativeDistances = [0];
+        
+        // Calculate distances for short route
+        for (let i = 1; i < shortCoords.length; i++) {
+          const from = turf.point([shortCoords[i-1][0], shortCoords[i-1][1]]);
+          const to = turf.point([shortCoords[i][0], shortCoords[i][1]]);
+          const dist = turf.distance(from, to, {units: 'kilometers'});
+          shortCumulativeDistances[i] = shortCumulativeDistances[i-1] + dist;
+        }
+        
+        // Calculate distances for long route
+        for (let i = 1; i < longCoords.length; i++) {
+          const from = turf.point([longCoords[i-1][0], longCoords[i-1][1]]);
+          const to = turf.point([longCoords[i][0], longCoords[i][1]]);
+          const dist = turf.distance(from, to, {units: 'kilometers'});
+          longCumulativeDistances[i] = longCumulativeDistances[i-1] + dist;
         }
         
         console.log(`${day}: Starting search from short idx ${shortStartIdx}, long idx ${longStartIdx}`);
@@ -1235,6 +1257,7 @@
         let lastGoodLongIdx = longStartIdx;
         
         // Scan forward on both routes, tracking where they're still close to each other
+        let divergenceFound = false;
         while (shortIdx < shortCoords.length - windowSize && matchedLongIdx < longCoords.length - windowSize) {
           // Check if current window of points is still similar between routes
           let windowStillMatching = true;
@@ -1281,9 +1304,34 @@
             }
             
             if (divergenceConfirmed) {
-              // Routes have definitely diverged - use the last good match as our decision point
-              console.log(`${day}: Routes diverge at short idx ${lastGoodShortIdx}/${shortCoords.length} and long idx ${lastGoodLongIdx}/${longCoords.length}`);
-              break;
+              // Check if this divergence is beyond the min distance requirement
+              const shortDistance = shortCumulativeDistances[lastGoodShortIdx];
+              
+              if (shortDistance >= minDecisionDistance) {
+                // Routes have definitely diverged beyond the minimum distance - use the last good match as our decision point
+                console.log(`${day}: Routes diverge at short idx ${lastGoodShortIdx}/${shortCoords.length} ` +
+                            `(${shortDistance.toFixed(2)}km) and long idx ${lastGoodLongIdx}/${longCoords.length}`);
+                divergenceFound = true;
+                break;
+              } else {
+                // This divergence is too early (< 1km), keep searching
+                console.log(`${day}: Found early divergence at ${shortDistance.toFixed(2)}km - continuing search`);
+                
+                // Skip ahead a bit to look for the next potential divergence
+                const skipPoints = 50; // Skip ahead ~50 points
+                shortIdx += skipPoints;
+                matchedLongIdx += skipPoints;
+                
+                // Make sure we don't go out of bounds
+                shortIdx = Math.min(shortIdx, shortCoords.length - windowSize - 1);
+                matchedLongIdx = Math.min(matchedLongIdx, longCoords.length - windowSize - 1);
+                
+                // Reset last good indices
+                lastGoodShortIdx = shortIdx;
+                lastGoodLongIdx = matchedLongIdx;
+                
+                continue;
+              }
             }
           } else {
             // Routes still match at this point, update our "last good" indices
@@ -1296,8 +1344,27 @@
           matchedLongIdx = bestMatchLongIdx;
         }
         
-        // Use the last good indices as our decision point (last common point before divergence)
-        const decisionPoint = shortCoords[lastGoodShortIdx];
+        // Use the last good indices as our decision point if divergence was found
+        // Otherwise use a point at around 1.5km as fallback
+        let decisionPoint;
+        
+        if (divergenceFound) {
+          decisionPoint = shortCoords[lastGoodShortIdx];
+        } else {
+          // Fallback: find a point at approximately 1.5km into the route
+          const fallbackDistance = 1.5; // km
+          let fallbackIdx = 0;
+          
+          for (let i = 0; i < shortCumulativeDistances.length; i++) {
+            if (shortCumulativeDistances[i] >= fallbackDistance) {
+              fallbackIdx = i;
+              break;
+            }
+          }
+          
+          console.log(`${day}: No suitable divergence found, using fallback at ${fallbackDistance}km (idx: ${fallbackIdx})`);
+          decisionPoint = shortCoords[fallbackIdx];
+        }
         
         // Create HTML for the marker
         const el = document.createElement('div');
