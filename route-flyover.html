@@ -328,53 +328,122 @@
     let totalDistance = 0;
     let elevationGain = 0;
     let routeCoordinates = [];
+    let smoothedRouteCoordinates = []; // Smoothed version of coordinates for camera movement when zoomed out
     let routeDistances = []; // Array to store cumulative distances along route
+    let smoothedRouteDistances = []; // Array to store distances for smoothed route
     let animationSpeed = 0.5;
     let cameraHeight = 25; // Default camera height (slider position, not actual meters)
     let currentRouteDistance = 0; // Current distance along route in meters
     let totalDistanceMeters = 0; // Total distance of the route in meters
     let lastPreCalcHeight = 25; // Track the last height value used for calculation
+    let prevBearing; // Track previous bearing for smoother camera movement
     
     // We've simplified the animation and removed pre-calculation 
     // to reduce potential causes of glitches
     
+    // Function to create a smoothed version of the route with fewer points
+    // This creates a simplified route for camera movement when zoomed out
+    function createSmoothedRoute(coordinates) {
+      // Skip if too few points
+      if (coordinates.length <= 10) return [...coordinates];
+      
+      // Determine how many points to use based on route length
+      // For very long routes with many points, we'll use more aggressive smoothing
+      const smoothingFactor = Math.max(5, Math.floor(coordinates.length / 200));
+      
+      // Create smoothed route with fewer points, but preserve elevation data
+      const smoothed = [];
+      
+      // Always include the first point
+      smoothed.push([...coordinates[0]]);
+      
+      // Add interior points at regular intervals
+      for (let i = smoothingFactor; i < coordinates.length - smoothingFactor; i += smoothingFactor) {
+        // For each smoothed point, use a weighted average of surrounding points
+        // This creates a more natural, curved path without sharp angles
+        
+        let sumLng = 0;
+        let sumLat = 0;
+        let sumEle = 0;
+        const windowSize = Math.min(5, smoothingFactor);
+        
+        // Average neighboring points (window of 5)
+        for (let j = i - windowSize; j <= i + windowSize; j++) {
+          if (j >= 0 && j < coordinates.length) {
+            // Apply distance-based weighting - closer points have more influence
+            const weight = 1 - Math.abs(i - j) / (windowSize + 1);
+            sumLng += coordinates[j][0] * weight;
+            sumLat += coordinates[j][1] * weight;
+            
+            // If elevation data exists, smooth it too
+            if (coordinates[j].length > 2) {
+              sumEle += coordinates[j][2] * weight;
+            }
+          }
+        }
+        
+        // Normalize by total weight
+        const totalWeight = (windowSize * 2 + 1) * 0.5;
+        const smoothPoint = [
+          sumLng / totalWeight,
+          sumLat / totalWeight
+        ];
+        
+        // Add elevation if it exists
+        if (coordinates[i].length > 2) {
+          smoothPoint.push(sumEle / totalWeight);
+        }
+        
+        smoothed.push(smoothPoint);
+      }
+      
+      // Always include the last point
+      smoothed.push([...coordinates[coordinates.length - 1]]);
+      
+      console.log(`Route smoothed from ${coordinates.length} to ${smoothed.length} points`);
+      return smoothed;
+    }
+    
     // Helper function to efficiently calculate segment data for any distance
     // Uses binary search for much faster lookups, important for smooth animation
-    function calculateSegmentForDistance(distanceKm) {
+    function calculateSegmentForDistance(distanceKm, useSmoothedRoute = false) {
+      // Choose which route and distances to use based on zoom level
+      const distances = useSmoothedRoute ? smoothedRouteDistances : routeDistances;
+      
       let beforeIdx = 0;
       let afterIdx = 1;
       let fraction = 0;
       
       // Handle edge cases for start and end of route
-      if (distanceKm <= routeDistances[0]) {
+      if (distanceKm <= distances[0]) {
         return { beforeIdx: 0, afterIdx: 1, fraction: 0 };
       }
       
-      if (distanceKm >= routeDistances[routeDistances.length - 1]) {
+      if (distanceKm >= distances[distances.length - 1]) {
         return { 
-          beforeIdx: routeDistances.length - 2, 
-          afterIdx: routeDistances.length - 1, 
+          beforeIdx: distances.length - 2, 
+          afterIdx: distances.length - 1, 
           fraction: 1 
         };
       }
       
       // Binary search for faster lookup - critical for smooth animation
       let left = 0;
-      let right = routeDistances.length - 1;
+      let right = distances.length - 1;
       
       while (left <= right) {
         const mid = Math.floor((left + right) / 2);
         
-        if (routeDistances[mid] === distanceKm) {
+        if (distances[mid] === distanceKm) {
           // Exact match
           beforeIdx = mid;
-          afterIdx = Math.min(mid + 1, routeDistances.length - 1);
+          afterIdx = Math.min(mid + 1, distances.length - 1);
           fraction = 0;
           break;
         }
         
-        if (routeDistances[mid] < distanceKm) {
-          if (mid < routeDistances.length - 1 && routeDistances[mid + 1] > distanceKm) {
+        if (distances[mid] < distanceKm) {
+          if (mid < distances.length - 1 && distances[mid + 1] > distanceKm) {
             // Found the segment
             beforeIdx = mid;
             afterIdx = mid + 1;
@@ -387,9 +456,9 @@
       }
       
       // Calculate the interpolation fraction
-      const segmentLength = routeDistances[afterIdx] - routeDistances[beforeIdx];
+      const segmentLength = distances[afterIdx] - distances[beforeIdx];
       if (segmentLength > 0) {
-        fraction = (distanceKm - routeDistances[beforeIdx]) / segmentLength;
+        fraction = (distanceKm - distances[beforeIdx]) / segmentLength;
         fraction = Math.max(0, Math.min(1, fraction));
       }
       
@@ -511,6 +580,21 @@
         
         // Set the global total distance in meters
         totalDistanceMeters = totalDistance * 1000;
+        
+        // Create a simplified version of the route for smooth camera movement when zoomed out
+        smoothedRouteCoordinates = createSmoothedRoute(routeCoordinates);
+        
+        // Calculate distances for the smoothed route
+        let smoothedTotalDistance = 0;
+        smoothedRouteDistances = [0]; // Start with 0
+        
+        for (let i = 1; i < smoothedRouteCoordinates.length; i++) {
+          const from = turf.point([smoothedRouteCoordinates[i-1][0], smoothedRouteCoordinates[i-1][1]]);
+          const to = turf.point([smoothedRouteCoordinates[i][0], smoothedRouteCoordinates[i][1]]);
+          const segmentDistance = turf.distance(from, to, {units: 'kilometers'});
+          smoothedTotalDistance += segmentDistance;
+          smoothedRouteDistances.push(smoothedTotalDistance);
+        }
         
         // Update route on map
         const geojson = {
@@ -840,8 +924,9 @@
       currentPointFloat = 0;
       currentRouteDistance = 0;
       
-      // Clear the stopped flag
+      // Clear tracking variables
       animationStopped = false;
+      prevBearing = undefined; // Reset bearing history
       
       // Reset Start button text
       startBtn.textContent = "Start";
@@ -981,33 +1066,33 @@
       // Convert to km for route lookup
       const currentDistanceKm = currentRouteDistance / 1000;
       
-      // Find the segment for the current position
-      const segment = calculateSegmentForDistance(currentDistanceKm);
-      const beforeIdx = segment.beforeIdx;
-      const afterIdx = segment.afterIdx;
-      const fraction = segment.fraction;
+      // Always use the detailed route for rider position
+      const riderSegment = calculateSegmentForDistance(currentDistanceKm, false);
+      const riderBeforeIdx = riderSegment.beforeIdx;
+      const riderAfterIdx = riderSegment.afterIdx;
+      const riderFraction = riderSegment.fraction;
       
-      // Get the points for interpolation
-      const beforePoint = routeCoordinates[beforeIdx];
-      const afterPoint = routeCoordinates[afterIdx];
+      // Get the points for rider interpolation
+      const riderBeforePoint = routeCoordinates[riderBeforeIdx];
+      const riderAfterPoint = routeCoordinates[riderAfterIdx];
       
       // Create interpolated point for the rider position
       const interpolatedPoint = [
-        beforePoint[0] + (afterPoint[0] - beforePoint[0]) * fraction,
-        beforePoint[1] + (afterPoint[1] - beforePoint[1]) * fraction
+        riderBeforePoint[0] + (riderAfterPoint[0] - riderBeforePoint[0]) * riderFraction,
+        riderBeforePoint[1] + (riderAfterPoint[1] - riderBeforePoint[1]) * riderFraction
       ];
       
       // Include elevation if available
-      if (beforePoint.length > 2 && afterPoint.length > 2) {
-        interpolatedPoint[2] = beforePoint[2] + (afterPoint[2] - beforePoint[2]) * fraction;
+      if (riderBeforePoint.length > 2 && riderAfterPoint.length > 2) {
+        interpolatedPoint[2] = riderBeforePoint[2] + (riderAfterPoint[2] - riderBeforePoint[2]) * riderFraction;
       }
       
       // Update position
       updatePointPosition(interpolatedPoint);
       
       // Update tracking information
-      currentPoint = beforeIdx;
-      currentPointFloat = beforeIdx + fraction;
+      currentPoint = riderBeforeIdx;
+      currentPointFloat = riderBeforeIdx + riderFraction;
       
       // Calculate camera look-ahead distance based on camera height, speed, and zoom level
       const normalizedHeight = (cameraHeight - 1) / 99;
@@ -1061,11 +1146,20 @@
       
       // Calculate camera look-ahead position
       const lookAheadDistanceKm = (currentRouteDistance + lookAheadMeters) / 1000;
-      const lookAheadSegment = calculateSegmentForDistance(lookAheadDistanceKm);
+      
+      // Determine when to use smoothed route for camera: zoomed out = smoothed, zoomed in = detailed
+      // Use the normalized height as a transition point between smooth and detailed
+      const useSmoothedForCamera = normalizedHeight > 0.5; // When camera is more than halfway up (zoomed out)
+      
+      // Get the look-ahead segment based on zoom level
+      const lookAheadSegment = calculateSegmentForDistance(lookAheadDistanceKm, useSmoothedForCamera);
+      
+      // Select route coordinates based on zoom level
+      const cameraRouteCoords = useSmoothedForCamera ? smoothedRouteCoordinates : routeCoordinates;
       
       // Get the points for the look-ahead interpolation
-      const lookBeforePoint = routeCoordinates[lookAheadSegment.beforeIdx];
-      const lookAfterPoint = routeCoordinates[lookAheadSegment.afterIdx];
+      const lookBeforePoint = cameraRouteCoords[lookAheadSegment.beforeIdx];
+      const lookAfterPoint = cameraRouteCoords[lookAheadSegment.afterIdx];
       
       // Calculate the interpolated look-ahead point
       const lookAheadCoord = [
@@ -1078,14 +1172,26 @@
       
       // Get a point further ahead for better bearing calculation
       const bearingDistanceKm = (currentRouteDistance + lookAheadMeters + 10) / 1000; // 10m further
-      const bearingSegment = calculateSegmentForDistance(bearingDistanceKm);
-      const bearingPoint = routeCoordinates[bearingSegment.afterIdx];
+      const bearingSegment = calculateSegmentForDistance(bearingDistanceKm, useSmoothedForCamera);
+      const bearingPoint = cameraRouteCoords[bearingSegment.afterIdx];
       
       if (bearingPoint && bearingPoint.length >= 2) {
         bearing = calculateBearing(lookAheadCoord, bearingPoint);
       } else {
         // Use simple bearing between current segment points as fallback
         bearing = calculateBearing(lookBeforePoint, lookAfterPoint);
+      }
+      
+      // If using smoothed route, apply additional bearing smoothing for even more stable camera
+      if (useSmoothedForCamera) {
+        // If we have a previous bearing, blend them for smoother transitions
+        if (typeof prevBearing !== 'undefined') {
+          // Smoothly interpolate bearing (more weight to previous bearing when zoomed far out)
+          const bearingBlend = Math.min(0.8, normalizedHeight * 0.7);
+          bearing = prevBearing * bearingBlend + bearing * (1 - bearingBlend);
+        }
+        // Store current bearing for next frame
+        prevBearing = bearing;
       }
       
       // Set the target bearing based on our calculated bearing
@@ -1603,14 +1709,15 @@
       let beforeIdx = 0;
       let afterIdx = 1;
       
-      // Find the segment containing our position
-      for (let i = 1; i < routeDistances.length; i++) {
-        if (routeDistances[i] >= currentDistanceKm) {
-          afterIdx = i;
-          beforeIdx = i - 1;
-          break;
-        }
-      }
+      // Determine if we should use smoothed route (when zoomed out)
+      const normalizedHeight = (cameraHeight - 1) / 99;
+      const useSmoothedForCamera = normalizedHeight > 0.5; // When camera is more than halfway up
+      
+      // Get segment using the appropriate route
+      const segment = calculateSegmentForDistance(currentDistanceKm, false); // Always use detailed route for rider position
+      beforeIdx = segment.beforeIdx;
+      afterIdx = segment.afterIdx;
+      fraction = segment.fraction;
       
       // Get the two points
       const beforePoint = routeCoordinates[beforeIdx];
@@ -1647,63 +1754,59 @@
       // Calculate camera position using the same logic as during animation
       
       // For camera positioning, we'll use distance-based look-ahead like during animation
-      // Determine look-ahead distance in meters based on camera height
       const normalizedHeight = (cameraHeight - 1) / 99; // 0 to 1 range
-      const lookAheadMeters = 15 + normalizedHeight * 85;
+      
+      // Determine if we should use smoothed route (when zoomed out)
+      const useSmoothedForCamera = normalizedHeight > 0.5; // When camera is more than halfway up
+      
+      // Calculate adaptive look-ahead distance
+      const inverseFactor = Math.max(0.3, 1 - normalizedHeight);
+      const baseAheadMeters = 15 + normalizedHeight * 85;
+      const speedFactor = 1 + (animationSpeed * animationSpeed * 2);
+      const lookAheadMeters = baseAheadMeters * speedFactor;
       
       // Calculate target position for camera based on current position + look-ahead distance
       const lookAheadDistanceKm = (currentRouteDistance + lookAheadMeters) / 1000;
       
-      // Find the camera position using the same approach as in animation
-      let lookBeforeIdx = beforeIdx;
-      let lookAfterIdx = afterIdx;
+      // Get the camera path segment - use smoothed route when zoomed out
+      const lookAheadSegment = calculateSegmentForDistance(lookAheadDistanceKm, useSmoothedForCamera);
       
-      // Find the segment containing our look-ahead position
-      for (let i = beforeIdx + 1; i < routeDistances.length; i++) {
-        if (routeDistances[i] >= lookAheadDistanceKm) {
-          lookAfterIdx = i;
-          lookBeforeIdx = i - 1;
-          break;
-        }
-      }
+      // Choose route array based on zoom level
+      const cameraRouteCoords = useSmoothedForCamera ? smoothedRouteCoordinates : routeCoordinates;
       
-      // Cap at the end of the route
-      if (lookBeforeIdx >= routeCoordinates.length - 1) {
-        lookBeforeIdx = routeCoordinates.length - 2;
-        lookAfterIdx = routeCoordinates.length - 1;
-      }
-      
-      // Get the points to interpolate between
-      const lookBeforePoint = routeCoordinates[lookBeforeIdx];
-      const lookAfterPoint = routeCoordinates[lookAfterIdx];
-      
-      // Calculate interpolation fraction based on distance
-      const lookAheadSegmentLength = routeDistances[lookAfterIdx] - routeDistances[lookBeforeIdx];
-      let lookAheadFraction = 0;
-      
-      if (lookAheadSegmentLength > 0) {
-        lookAheadFraction = (lookAheadDistanceKm - routeDistances[lookBeforeIdx]) / lookAheadSegmentLength;
-        // Clamp to valid range
-        lookAheadFraction = Math.max(0, Math.min(1, lookAheadFraction));
-      }
+      // Get the points to interpolate between for camera path
+      const lookBeforePoint = cameraRouteCoords[lookAheadSegment.beforeIdx];
+      const lookAfterPoint = cameraRouteCoords[lookAheadSegment.afterIdx];
       
       // Create interpolated look-ahead point
       const lookAheadCoord = [
-        lookBeforePoint[0] + (lookAfterPoint[0] - lookBeforePoint[0]) * lookAheadFraction,
-        lookBeforePoint[1] + (lookAfterPoint[1] - lookBeforePoint[1]) * lookAheadFraction
+        lookBeforePoint[0] + (lookAfterPoint[0] - lookBeforePoint[0]) * lookAheadSegment.fraction,
+        lookBeforePoint[1] + (lookAfterPoint[1] - lookBeforePoint[1]) * lookAheadSegment.fraction
       ];
       
       // Calculate bearing to next segment
       let bearing = 0;
-      if (lookAfterIdx < routeCoordinates.length - 1) {
+      // Get lookahead segment based on smoothed/detailed choice
+      const lookAheadCameraSegment = calculateSegmentForDistance(lookAheadDistanceKm, useSmoothedForCamera);
+      const lookAfterCameraIdx = lookAheadCameraSegment.afterIdx;
+      
+      if (lookAfterCameraIdx < cameraRouteCoords.length - 1) {
         // Use the bearing toward the next segment
-        const nextPoint = routeCoordinates[lookAfterIdx + 1];
+        const nextPoint = cameraRouteCoords[lookAfterCameraIdx + 1];
         bearing = calculateBearing(lookAheadCoord, nextPoint);
       } else if (beforeIdx > 0) {
         // Near the end, use the bearing from the previous segment
         const prevPoint = routeCoordinates[beforeIdx - 1];
         bearing = calculateBearing(prevPoint, interpolatedPoint);
       }
+      
+      // Apply additional bearing smoothing for zoomed out
+      if (useSmoothedForCamera && typeof prevBearing !== 'undefined') {
+        // Blend with previous bearing for smoother transitions when zoomed out
+        const bearingBlend = Math.min(0.8, normalizedHeight * 0.7);
+        bearing = prevBearing * bearingBlend + bearing * (1 - bearingBlend);
+      }
+      prevBearing = bearing; // Store for next use
       
       // Update the camera tracking values to maintain camera continuity when animation resumes
       currentCameraPos = { 
