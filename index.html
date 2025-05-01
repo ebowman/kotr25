@@ -558,15 +558,15 @@
         </div>
         <div class="legend">
           <div class="legend-item">
-            <div class="legend-color" style="background: blue;"></div>
+            <div class="legend-color" style="background: #3388FF;"></div>
             <span>Common Route</span>
           </div>
           <div class="legend-item">
-            <div class="legend-color" style="background: green;"></div>
+            <div class="legend-color" style="background: #00FFFF;"></div>
             <span>Short Route</span>
           </div>
           <div class="legend-item">
-            <div class="legend-color" style="background: red;"></div>
+            <div class="legend-color" style="background: #FF3333;"></div>
             <span>Long Route</span>
           </div>
           <div class="legend-item">
@@ -656,15 +656,15 @@
         </div>
         <div class="legend">
           <div class="legend-item">
-            <div class="legend-color" style="background: blue;"></div>
+            <div class="legend-color" style="background: #3388FF;"></div>
             <span>Common Route</span>
           </div>
           <div class="legend-item">
-            <div class="legend-color" style="background: green;"></div>
+            <div class="legend-color" style="background: #00FFFF;"></div>
             <span>Short Route</span>
           </div>
           <div class="legend-item">
-            <div class="legend-color" style="background: red;"></div>
+            <div class="legend-color" style="background: #FF3333;"></div>
             <span>Long Route</span>
           </div>
           <div class="legend-item">
@@ -754,15 +754,15 @@
         </div>
         <div class="legend">
           <div class="legend-item">
-            <div class="legend-color" style="background: blue;"></div>
+            <div class="legend-color" style="background: #3388FF;"></div>
             <span>Common Route</span>
           </div>
           <div class="legend-item">
-            <div class="legend-color" style="background: green;"></div>
+            <div class="legend-color" style="background: #00FFFF;"></div>
             <span>Short Route</span>
           </div>
           <div class="legend-item">
-            <div class="legend-color" style="background: red;"></div>
+            <div class="legend-color" style="background: #FF3333;"></div>
             <span>Long Route</span>
           </div>
           <div class="legend-item">
@@ -1071,11 +1071,11 @@
           };
           
           // Choose color based on route type
-          let color = 'blue';
+          let color = '#3388FF'; // Brighter blue for better visibility on satellite map
           let routeType = 'single';
           
           if (gpxFiles.length > 1) {
-            color = i === 0 ? 'green' : 'red';
+            color = i === 0 ? '#00FFFF' : '#FF3333'; // Using bright cyan for short route and bright red for long route
             routeType = i === 0 ? 'short' : 'long';
           }
           
@@ -1098,8 +1098,8 @@
             },
             paint: {
               'line-color': color,
-              'line-width': 5,
-              'line-opacity': 0.7
+              'line-width': 6, // Increased from 5 to 6 for better visibility
+              'line-opacity': 0.85 // Increased from 0.7 to 0.85 for better visibility
             }
           });
           
