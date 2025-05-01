@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>King of the Road 2025 - Route Flyover</title>
   <link rel="stylesheet" href="https://unpkg.com/mapbox-gl@2.15.0/dist/mapbox-gl.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
   <script src="https://unpkg.com/mapbox-gl@2.15.0/dist/mapbox-gl.js"></script>
   <script src="https://unpkg.com/@turf/turf@6.5.0/turf.min.js"></script>
   <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
@@ -206,6 +207,11 @@
 </head>
 <body>
   <div class="container">
+    <div style="display: flex; justify-content: space-between; align-items: center; width: 100%; margin-bottom: 10px;">
+      <a href="index.html" style="text-decoration: none; color: #3498db; display: flex; align-items: center;">
+        <i class="fas fa-arrow-left" style="margin-right: 5px;"></i> Back to routes
+      </a>
+    </div>
     <h1>King of the Road 2025 - 3D Route Flyover</h1>
     
     <div class="controls">
@@ -327,13 +333,10 @@
     let cameraHeight = 25; // Default camera height (slider position, not actual meters)
     let currentRouteDistance = 0; // Current distance along route in meters
     let totalDistanceMeters = 0; // Total distance of the route in meters
+    let lastPreCalcHeight = 25; // Track the last height value used for calculation
     
-    // Pre-calculation variables to avoid real-time computation during animation
-    let preCalculatedSegments = {}; // Object map to store pre-calculated route segments with interpolation data
-    let preCalculatedLookAhead = {}; // Object to store pre-calculated look-ahead points for camera positioning
-    let lastPreCalcHeight = 0; // Track when we need to recalculate due to height changes
-    let stepSize = 0.5; // Default step size, will be updated during pre-calculation
-    let lookAheadInterval = 25; // Default look-ahead interval, will be updated during pre-calculation
+    // We've simplified the animation and removed pre-calculation 
+    // to reduce potential causes of glitches
     
     // Helper function to efficiently calculate segment data for any distance
     // Uses binary search for much faster lookups, important for smooth animation
@@ -434,11 +437,7 @@
         // Initial terrain setup
         addTerrainAndSources();
         
-        if (!mapInitialized) {
-          // Load initial route (only once)
-          loadRoute(routeSelect.value, true); // Pass true to indicate initial load
-          mapInitialized = true;
-        }
+        mapInitialized = true;
       });
       
       // Handle source errors by adding an error handler
@@ -1368,204 +1367,62 @@
     
     // Terrain exaggeration is now fixed at 1.0x - function removed
     
-    // Pre-calculate route segments and look-ahead data more efficiently
+    // We've removed the complex pre-calculation function in favor of a simpler,
+    // more direct approach that calculates what we need in real-time.
+    
+    // Simple pre-calculation function to update the cached height value
     function preCalculateRouteData() {
-      if (!routeCoordinates || routeCoordinates.length === 0 || !routeDistances || routeDistances.length === 0) {
-        return;
-      }
-      
-      console.time('Route pre-calculation');
-      
-      // Store current camera height for tracking changes
+      // Simply update the stored height value
       lastPreCalcHeight = cameraHeight;
-      
-      // Adjust calculation strategy based on route length
-      const isLongRoute = totalDistanceMeters > 50000;
-      
-      // Set global step sizes
-      stepSize = isLongRoute ? 10 : 1; // Use coarser steps to avoid memory issues
-      lookAheadInterval = isLongRoute ? 100 : 50; // Reduced density for better performance
-      
-      // Calculate normalized height once
-      const normalizedHeight = (cameraHeight - 1) / 99;
-      const lookAheadMeters = 15 + normalizedHeight * 85;
-      
-      // Instead of calculating all points in one go (which can cause GC pauses),
-      // we'll create a more memory-efficient data structure - an index-based map
-      
-      // Clear previous calculations and create map-based structures instead of arrays
-      preCalculatedSegments = {};
-      preCalculatedLookAhead = {};
-      
-      // Optimize by pre-building an index of distances to route points
-      // This avoids the repeated linear search that was likely causing pauses
-      const distanceIndex = [];
-      for (let i = 0; i < routeDistances.length; i++) {
-        distanceIndex.push({
-          distance: routeDistances[i], 
-          index: i
-        });
-      }
-      
-      // Highly optimized segment lookup function to replace the linear search
-      const findSegmentForDistance = (distanceKm) => {
-        // Binary search for faster lookup
-        let start = 0;
-        let end = distanceIndex.length - 1;
-        
-        // Handle edge cases
-        if (distanceKm <= distanceIndex[0].distance) return { beforeIdx: 0, afterIdx: 1, fraction: 0 };
-        if (distanceKm >= distanceIndex[end].distance) return { beforeIdx: end-1, afterIdx: end, fraction: 1 };
-        
-        // Binary search
-        while (start <= end) {
-          const mid = Math.floor((start + end) / 2);
-          
-          if (distanceIndex[mid].distance === distanceKm) {
-            return { 
-              beforeIdx: mid, 
-              afterIdx: Math.min(mid + 1, distanceIndex.length - 1),
-              fraction: 0 
-            };
-          }
-          
-          if (distanceIndex[mid].distance < distanceKm) {
-            if (mid < distanceIndex.length - 1 && distanceIndex[mid + 1].distance > distanceKm) {
-              // Found the segment
-              const beforeIdx = distanceIndex[mid].index;
-              const afterIdx = distanceIndex[mid + 1].index;
-              const segmentLength = distanceIndex[mid + 1].distance - distanceIndex[mid].distance;
-              let fraction = 0;
-              if (segmentLength > 0) {
-                fraction = (distanceKm - distanceIndex[mid].distance) / segmentLength;
-                fraction = Math.max(0, Math.min(1, fraction));
-              }
-              return { beforeIdx, afterIdx, fraction };
-            }
-            start = mid + 1;
-          } else {
-            end = mid - 1;
-          }
-        }
-        
-        // Fallback if binary search fails
-        for (let i = 0; i < distanceIndex.length - 1; i++) {
-          if (distanceIndex[i].distance <= distanceKm && distanceIndex[i + 1].distance >= distanceKm) {
-            const beforeIdx = distanceIndex[i].index;
-            const afterIdx = distanceIndex[i + 1].index;
-            const segmentLength = distanceIndex[i + 1].distance - distanceIndex[i].distance;
-            let fraction = 0;
-            if (segmentLength > 0) {
-              fraction = (distanceKm - distanceIndex[i].distance) / segmentLength;
-              fraction = Math.max(0, Math.min(1, fraction));
-            }
-            return { beforeIdx, afterIdx, fraction };
-          }
-        }
-        
-        // Last resort fallback
-        return { beforeIdx: 0, afterIdx: 1, fraction: 0 };
-      };
-      
-      // Function to calculate interpolated point
-      const interpolatePoint = (beforeIdx, afterIdx, fraction) => {
-        const beforePoint = routeCoordinates[beforeIdx];
-        const afterPoint = routeCoordinates[afterIdx];
-        
-        const interpolatedPoint = [
-          beforePoint[0] + (afterPoint[0] - beforePoint[0]) * fraction,
-          beforePoint[1] + (afterPoint[1] - beforePoint[1]) * fraction
-        ];
-        
-        // Include elevation if available
-        if (beforePoint.length > 2 && afterPoint.length > 2) {
-          interpolatedPoint[2] = beforePoint[2] + (afterPoint[2] - beforePoint[2]) * fraction;
-        }
-        
-        return interpolatedPoint;
-      };
-      
-      // Pre-calculate in chunks to avoid long GC pauses
-      const chunkSize = 10000; // Process in chunks to avoid GC pauses
-      const chunkCount = Math.ceil(totalDistanceMeters / chunkSize);
-      
-      // Process each chunk one frame at a time to avoid blocking the UI
-      let currentChunk = 0;
-      
-      const processNextChunk = () => {
-        if (currentChunk >= chunkCount) {
-          console.timeEnd('Route pre-calculation');
-          console.log(`Pre-calculated segments for ${totalDistanceMeters.toFixed(0)}m route with step size ${stepSize}m`);
-          return;
-        }
-        
-        const startDistance = currentChunk * chunkSize;
-        const endDistance = Math.min((currentChunk + 1) * chunkSize, totalDistanceMeters);
-        
-        // Pre-calculate points at regular intervals
-        for (let distance = startDistance; distance <= endDistance; distance += stepSize) {
-          // Convert to km for route lookup
-          const distanceKm = distance / 1000;
-          
-          // Fast segment lookup
-          const { beforeIdx, afterIdx, fraction } = findSegmentForDistance(distanceKm);
-          
-          // Store minimal data in an object map (more efficient than array)
-          // Store by key for direct indexing rather than searching
-          preCalculatedSegments[distance] = {
-            beforeIdx,
-            afterIdx, 
-            fraction
-          };
-          
-          // Pre-calculate camera look-ahead data at regular intervals
-          if (distance % lookAheadInterval === 0) {
-            const lookAheadDistance = distance + lookAheadMeters;
-            const lookAheadDistanceKm = lookAheadDistance / 1000;
-            
-            // Use the same optimized segment finder
-            const lookAhead = findSegmentForDistance(lookAheadDistanceKm);
-            
-            // Calculate the interpolated look-ahead point
-            const lookAheadPoint = interpolatePoint(
-              lookAhead.beforeIdx, 
-              lookAhead.afterIdx, 
-              lookAhead.fraction
-            );
-            
-            // Calculate bearing (optimized to avoid duplicate calculations)
-            let bearing = 0;
-            const nextIdx = Math.min(lookAhead.afterIdx + 1, routeCoordinates.length - 1);
-            if (nextIdx !== lookAhead.afterIdx) {
-              bearing = calculateBearing(lookAheadPoint, routeCoordinates[nextIdx]);
-            } else if (lookAhead.beforeIdx > 0) {
-              bearing = calculateBearing(routeCoordinates[lookAhead.beforeIdx - 1], lookAheadPoint);
-            }
-            
-            // Store look-ahead data
-            preCalculatedLookAhead[distance] = {
-              point: lookAheadPoint,
-              bearing: bearing
-            };
-          }
-        }
-        
-        currentChunk++;
-        
-        // Process next chunk on next frame to avoid blocking
-        requestAnimationFrame(processNextChunk);
-      };
-      
-      // Start processing the first chunk
-      processNextChunk();
+      // All actual calculations are done in real-time during animation
     }
   
+    // Function to parse URL parameters and hash fragments
+    function parseUrlParams() {
+      // Check for route parameter in the URL query string
+      const urlParams = new URLSearchParams(window.location.search);
+      const routeParam = urlParams.get('route');
+      
+      // Check for route in the hash fragment (e.g. #route=D1_East_Long.gpx)
+      const hashParams = new URLSearchParams(window.location.hash.substring(1));
+      const hashRoute = hashParams.get('route');
+      
+      // Use the parameter from query string or hash if available
+      const requestedRoute = routeParam || hashRoute;
+      
+      if (requestedRoute) {
+        // Find the matching option in the select element
+        const options = Array.from(routeSelect.options);
+        const matchingOption = options.find(option => option.value === requestedRoute);
+        
+        if (matchingOption) {
+          // Set the select element to the requested route
+          routeSelect.value = requestedRoute;
+          return requestedRoute;
+        }
+      }
+      
+      // Return default route if no valid route parameter found
+      return routeSelect.value;
+    }
+
     // Event listeners
     document.addEventListener('DOMContentLoaded', () => {
       initMap();
       
+      // Check URL parameters for requested route
+      const initialRoute = parseUrlParams();
+      
+      // Load the initial route from URL parameter if available
+      if (initialRoute) {
+        loadRoute(initialRoute, true);
+      }
+      
       routeSelect.addEventListener('change', () => {
         loadRoute(routeSelect.value, true); // Apply camera height immediately on route change
+        
+        // Update URL hash to make the current route shareable
+        window.location.hash = `route=${routeSelect.value}`;
       });
       
       startBtn.addEventListener('click', startAnimation);
