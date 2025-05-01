@@ -1708,9 +1708,12 @@
       // Find the two points that our current distance falls between
       let beforeIdx = 0;
       let afterIdx = 1;
+      let fraction = 0;
+      
+      // Calculate normalized height value (0-1 range) for adaptive behaviors
+      const normalizedHeight = (cameraHeight - 1) / 99;
       
       // Determine if we should use smoothed route (when zoomed out)
-      const normalizedHeight = (cameraHeight - 1) / 99;
       const useSmoothedForCamera = normalizedHeight > 0.5; // When camera is more than halfway up
       
       // Get segment using the appropriate route
@@ -1754,10 +1757,9 @@
       // Calculate camera position using the same logic as during animation
       
       // For camera positioning, we'll use distance-based look-ahead like during animation
-      const normalizedHeight = (cameraHeight - 1) / 99; // 0 to 1 range
+      // We already calculated normalizedHeight above
       
-      // Determine if we should use smoothed route (when zoomed out)
-      const useSmoothedForCamera = normalizedHeight > 0.5; // When camera is more than halfway up
+      // We already determined if we should use smoothed route above
       
       // Calculate adaptive look-ahead distance
       const inverseFactor = Math.max(0.3, 1 - normalizedHeight);
