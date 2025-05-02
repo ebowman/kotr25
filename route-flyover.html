@@ -932,15 +932,25 @@
     
     // CAMERA SOLVER: Predictive direct-follow camera system
     function updateCameraPhysics(targetPos, targetFOV) {
+      // Get current manual zoom setting
+      const heightControl = document.getElementById('camera-height');
+      let manualFOV = targetFOV;
+      
+      if (heightControl) {
+        const heightValue = parseInt(heightControl.value);
+        const heightRatio = heightValue / 100;
+        manualFOV = baseZoom + ((zoomMax - baseZoom) * heightRatio);
+      }
+      
       // Apply safety limits to FOV
-      targetFOV = Math.max(baseZoom, Math.min(zoomMax, targetFOV));
+      manualFOV = Math.max(baseZoom, Math.min(zoomMax, manualFOV));
       
       // Calculate zoom alpha (0: zoomed in, 1: zoomed out)
       const zoomAlpha = Math.max(0, Math.min(1, (cameraFOV - baseZoom) / (zoomMax - baseZoom)));
       
-      // Update FOV with simple direct approach (removed kFOV reference)
-      // Move directly 30% of the way to target FOV each frame (reduced from 40%)
-      cameraFOV = cameraFOV + (targetFOV - cameraFOV) * 0.3;
+      // Update FOV with simple direct approach
+      // Move directly 30% of the way to target FOV each frame
+      cameraFOV = cameraFOV + (manualFOV - cameraFOV) * 0.3;
       
       // Apply safety limits to FOV
       cameraFOV = Math.max(baseZoom, Math.min(zoomMax, cameraFOV));
@@ -1984,12 +1994,9 @@
       heightControl.addEventListener('input', () => {
         cameraHeight = parseInt(heightControl.value);
         
-        // Update UI only - the actual zoom behavior is now handled in the camera solver
-        // to allow blending between automatic and manual control
-        
-        // If animation is not running, update the view immediately
-        if (!animationId && routeCoordinates.length > 0) {
-          // Calculate zoom level based on height slider
+        // If not animating, update the view immediately
+        if (!animationId) {
+          // Calculate target FOV based on height slider
           const heightRatio = cameraHeight / 100;
           const targetFOV = baseZoom + ((zoomMax - baseZoom) * heightRatio);
           
