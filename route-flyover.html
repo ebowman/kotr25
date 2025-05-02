@@ -350,7 +350,9 @@
     
     // Camera state variables
     let cameraPos = { x: 0, y: 0, z: 0 }; // Position
+    let cameraVel = { x: 0, y: 0, z: 0 }; // Velocity for physics-based motion
     let cameraFOV = 60; // Field of view
+    let cameraFOVVel = 0; // Velocity for FOV physics (spring model)
     
     // Camera control parameters based on CAMERA.md
     let lookAheadFactor = 0.2;  // Less aggressive look-ahead
@@ -802,6 +804,19 @@
           Math.abs(bikerNDC.x) < outerBox.x && 
           Math.abs(bikerNDC.y) < outerBox.y;
         
+        // Check if manual zoom level is active via slider
+        const heightControl = document.getElementById('camera-height');
+        let isManualZoomActive = false;
+        let manualZoomAmount = 0;
+        
+        if (heightControl) {
+          const heightValue = parseInt(heightControl.value);
+          // If user has moved slider significantly from center (25-75 range), consider manual zoom active
+          isManualZoomActive = heightValue < 25 || heightValue > 75;
+          // Calculate how far from center (0-50, where 50 = at either extreme)
+          manualZoomAmount = Math.abs(heightValue - 50);
+        }
+        
         // Frame timer
         stateTimer += dt;
         
@@ -812,47 +827,90 @@
         let nextState = framingState;
         let nextZoomGoal = zoomGoal;
         
-        // State machine from CAMERA.md
-        switch (framingState) {
-          case "IN_SAFE":
-            if (isLeaving) {
-              nextZoomGoal = Math.min(cameraFOV + zoomStep, zoomMax);
-              nextState = "ZOOMING_OUT";
-              stateTimer = 0;
-            }
-            break;
-            
-          case "ZOOMING_OUT":
-            if (isInsideOuterBox) {
-              nextState = "COOLDOWN";
-            }
-            break;
-            
-          case "COOLDOWN":
-            if (stateTimer > stableTime) {
-              nextZoomGoal = baseZoom;
-              nextState = "ZOOMING_IN";
-            } else if (isLeaving) {
-              nextZoomGoal = Math.min(cameraFOV + zoomStep, zoomMax);
-              nextState = "ZOOMING_OUT";
-              stateTimer = 0;
-            }
-            break;
-            
-          case "ZOOMING_IN":
-            if (isLeaving) {
-              nextZoomGoal = cameraFOV; // Abort zoom-in
-              nextState = "ZOOMING_OUT";
-            } else if (Math.abs(zoomGoal - cameraFOV) < 0.1) {
+        // State machine from CAMERA.md, modified to respect manual zoom
+        if (isManualZoomActive && manualZoomAmount > 40) {
+          // When manual zoom is at extremes, defer to manual control completely
+          // Exit the automatic state machine
+          const manualZoomFOV = baseZoom + ((zoomMax - baseZoom) * heightControl.value / 100);
+          nextZoomGoal = manualZoomFOV;
+          nextState = "IN_SAFE"; // Reset state
+        } else {
+          // Handle automatic zoom with the state machine from CAMERA.md
+          switch (framingState) {
+            case "IN_SAFE":
+              if (isLeaving) {
+                // Calculate zoom step based on how far rider is outside the frame
+                const xExcess = Math.max(0, Math.abs(bikerNDC.x) - innerBoxSize.x);
+                const yExcess = Math.max(0, Math.abs(bikerNDC.y) - innerBoxSize.y);
+                const maxExcess = Math.max(xExcess, yExcess);
+                
+                // Scale zoom step based on how far outside the frame (smoother transitions)
+                // More aggressive zoom out when rider is far outside the frame
+                const adaptiveStep = zoomStep * (1 + maxExcess * 2);
+                
+                nextZoomGoal = Math.min(cameraFOV + adaptiveStep, zoomMax);
+                nextState = "ZOOMING_OUT";
+                stateTimer = 0;
+              }
+              break;
+              
+            case "ZOOMING_OUT":
+              // Add hysteresis margin to avoid oscillation
+              const hysteresisMargin = 0.05; // 5% margin
+              const isWellInsideOuterBox = 
+                Math.abs(bikerNDC.x) < (outerBox.x - hysteresisMargin) && 
+                Math.abs(bikerNDC.y) < (outerBox.y - hysteresisMargin);
+                
+              if (isWellInsideOuterBox) {
+                nextState = "COOLDOWN";
+              }
+              break;
+              
+            case "COOLDOWN":
+              if (stateTimer > stableTime) {
+                nextZoomGoal = baseZoom;
+                nextState = "ZOOMING_IN";
+              } else if (isLeaving) {
+                // Gradual zoom step based on how far outside the frame (smoother)
+                const xExcess = Math.max(0, Math.abs(bikerNDC.x) - innerBoxSize.x);
+                const yExcess = Math.max(0, Math.abs(bikerNDC.y) - innerBoxSize.y);
+                const maxExcess = Math.max(xExcess, yExcess);
+                const adaptiveStep = zoomStep * (1 + maxExcess * 2);
+                
+                nextZoomGoal = Math.min(cameraFOV + adaptiveStep, zoomMax);
+                nextState = "ZOOMING_OUT";
+                stateTimer = 0;
+              }
+              break;
+              
+            case "ZOOMING_IN":
+              if (isLeaving) {
+                nextZoomGoal = cameraFOV; // Abort zoom-in
+                nextState = "ZOOMING_OUT";
+              } else if (Math.abs(zoomGoal - cameraFOV) < 0.1) {
+                nextState = "IN_SAFE";
+              }
+              break;
+              
+            default:
+              // Handle invalid state by resetting
+              console.warn('Invalid framing state:', framingState);
               nextState = "IN_SAFE";
-            }
-            break;
-            
-          default:
-            // Handle invalid state by resetting
-            console.warn('Invalid framing state:', framingState);
-            nextState = "IN_SAFE";
-            nextZoomGoal = baseZoom;
+              nextZoomGoal = baseZoom;
+          }
+        }
+        
+        // Blend automatic and manual zoom control
+        if (heightControl && !isManualZoomActive) {
+          const heightValue = parseInt(heightControl.value);
+          // Calculate manual influence (0-1 scale, higher at extremes)
+          const manualInfluence = Math.pow(manualZoomAmount / 50, 2) * 0.7; // Squared for non-linear influence
+          
+          // Calculate manual FOV from height slider
+          const manualFOV = baseZoom + ((zoomMax - baseZoom) * heightValue / 100);
+          
+          // Blend automatic and manual control
+          nextZoomGoal = nextZoomGoal * (1 - manualInfluence) + manualFOV * manualInfluence;
         }
         
         // Update state
@@ -901,47 +959,87 @@
         }
       }
       
-      // Hard limit on how far the camera can be from the target position
-      // This ensures the camera never lags too far behind
-      const maxDistance = 0.0003;
+      // Implement critically-damped spring physics for camera position (per CAMERA.md)
+      // For each axis (x,y,z):
+      // k = stiffness(zoomLevel)
+      // c = 2√k (critical damping)
+      // a = k * (goal - pos) - c * vel
+      // vel_new = vel + a * dt
+      // pos_new = pos + vel_new * dt
+      
       const dx = targetPos.x - cameraPos.x;
       const dy = targetPos.y - cameraPos.y;
       const dz = targetPos.z - cameraPos.z;
       
-      // Calculate actual distance
+      // Calculate stiffness based on zoom level - higher when zoomed in
+      // "Stiffness scales linearly with inverse zoom: k = kBase * lerp(1, kZoomedOutMul, zoomAlpha)"
+      // Using existing zoomAlpha variable already calculated above
+      const kFOV = kBase * (1 + (kZoomedOutMul - 1) * zoomAlpha);
+      
+      // Critical damping coefficient
+      const c = 2 * Math.sqrt(kFOV);
+      
+      // Calculate acceleration for each axis
+      const ax = kFOV * dx - c * cameraVel.x;
+      const ay = kFOV * dy - c * cameraVel.y;
+      const az = kFOV * dz - c * cameraVel.z;
+      
+      // Update velocity
+      cameraVel.x = cameraVel.x + ax * dt;
+      cameraVel.y = cameraVel.y + ay * dt;
+      cameraVel.z = cameraVel.z + az * dt;
+      
+      // Update position
+      cameraPos.x = cameraPos.x + cameraVel.x * dt;
+      cameraPos.y = cameraPos.y + cameraVel.y * dt;
+      cameraPos.z = cameraPos.z + cameraVel.z * dt;
+      
+      // Hard limit on how far the camera can be from the target position
+      // This ensures the camera never lags too far behind (safety fallback)
+      const maxDistance = 0.0003;
       const distance = Math.sqrt(dx*dx + dy*dy);
       
-      // If camera is too far away, force it closer
       if (distance > maxDistance) {
-        // Move camera directly toward target at max distance
+        // Move camera directly toward target at max distance (emergency correction)
         const scale = maxDistance / distance;
         cameraPos.x = targetPos.x - dx * scale;
         cameraPos.y = targetPos.y - dy * scale;
-      } else {
-        // Normal predictive positioning
-        // Move camera predictiveFactor of the way to target position
-        cameraPos.x = cameraPos.x + dx * predictiveFactor;
-        cameraPos.y = cameraPos.y + dy * predictiveFactor;
-      }
-      
-      // Handle Z separately with smoother factor
-      cameraPos.z = cameraPos.z + dz * 0.5;
-      
-      // Adjust target FOV based on camera height slider to allow manual control
-      // This blends the automatic framing system with manual control
-      const heightControl = document.getElementById('camera-height');
-      if (heightControl) {
-        const heightValue = parseInt(heightControl.value);
-        // Calculate manual FOV from height slider (this overrides some automated zoom behavior)
-        const manualFOV = baseZoom + ((zoomMax - baseZoom) * heightValue / 100);
         
-        // Blend automatic and manual FOV control - give more weight to manual at extremes
-        const userWeight = Math.abs((heightValue - 50) / 50); // 0 at middle, 1 at extremes
-        targetFOV = targetFOV * (1 - userWeight) + manualFOV * userWeight;
+        // Reset velocity when performing emergency correction to avoid oscillation
+        cameraVel.x = 0;
+        cameraVel.y = 0;
       }
       
-      // Simple direct update for FOV - no physics or velocity needed
-      cameraFOV = cameraFOV + (targetFOV - cameraFOV) * 0.2;
+      // Manual zoom blending is now handled in the framing controller
+      // This is a cleaner architecture where the framing controller decides the
+      // target FOV and the camera solver just applies physics to reach it
+      
+      // Implement proper spring physics for FOV as specified in CAMERA.md
+      // k = stiffness(zoomLevel)
+      // c = 2√k (critical damping)
+      // a = k * (goal - pos) - c * vel
+      // vel_new = vel + a * dt
+      // pos_new = pos + vel_new * dt
+
+      // Initialize FOV velocity if not exists
+      if (typeof cameraFOVVel === 'undefined') {
+        cameraFOVVel = 0;
+      }
+
+      // Use the same zoom alpha calculation for FOV as we did for position
+      // Using the same zoomAlpha variable already calculated above
+      
+      // Critical damping coefficient - reuse the same constants
+      const cFOV = 2 * Math.sqrt(kFOV);
+      
+      // Calculate acceleration
+      const a = kFOV * (targetFOV - cameraFOV) - cFOV * cameraFOVVel;
+      
+      // Update velocity and position
+      cameraFOVVel = cameraFOVVel + a * dt;
+      cameraFOV = cameraFOV + cameraFOVVel * dt;
+      
+      // Apply safety limits to FOV
       cameraFOV = Math.max(baseZoom, Math.min(zoomMax, cameraFOV));
       
       // Calculate bearing, ensuring it doesn't swing wildly
@@ -1345,7 +1443,7 @@
         };
         cameraVel = { x: 0, y: 0, z: 0 };
         cameraFOV = baseZoom;
-        cameraFOVVel = 0;
+        cameraFOVVel = 0; // Initialize velocity for spring physics
       });
     }
     
@@ -1520,6 +1618,7 @@
       
       // Reset velocity
       cameraVel = { x: 0, y: 0, z: 0 };
+      cameraFOVVel = 0; // Reset FOV velocity for spring physics
       
       // Reset framing controller
       framingState = "IN_SAFE";
