@@ -794,15 +794,20 @@
           y: adaptedTightBox.y + (adaptedLooseBox.y - adaptedTightBox.y) * zoomAlpha
         };
         
-        // Check if biker is leaving inner box
+        // Add hysteresis to prevent rapid state changes
+        const hysteresisMargin = zoomHysteresis;
         const isLeaving = 
-          Math.abs(bikerNDC.x) > innerBoxSize.x || 
-          Math.abs(bikerNDC.y) > innerBoxSize.y;
+          Math.abs(bikerNDC.x) > (innerBoxSize.x + hysteresisMargin) || 
+          Math.abs(bikerNDC.y) > (innerBoxSize.y + hysteresisMargin);
         
-        // Check if biker is inside outer box
+        const isWellInside = 
+          Math.abs(bikerNDC.x) < (innerBoxSize.x - hysteresisMargin) && 
+          Math.abs(bikerNDC.y) < (innerBoxSize.y - hysteresisMargin);
+        
+        // Check if biker is inside outer box with hysteresis
         const isInsideOuterBox = 
-          Math.abs(bikerNDC.x) < outerBox.x && 
-          Math.abs(bikerNDC.y) < outerBox.y;
+          Math.abs(bikerNDC.x) < (outerBox.x - hysteresisMargin) && 
+          Math.abs(bikerNDC.y) < (outerBox.y - hysteresisMargin);
         
         // Check if manual zoom level is active via slider
         const heightControl = document.getElementById('camera-height');
@@ -817,7 +822,7 @@
           manualZoomAmount = Math.abs(heightValue - 50);
         }
         
-        // Frame timer
+        // Frame timer with minimum state time
         stateTimer += dt;
         
         // Cap timer to prevent overflow
@@ -827,7 +832,7 @@
         let nextState = framingState;
         let nextZoomGoal = zoomGoal;
         
-        // State machine from CAMERA.md, modified to respect manual zoom
+        // State machine from CAMERA.md, modified to respect manual zoom and prevent oscillation
         if (isManualZoomActive && manualZoomAmount > 40) {
           // When manual zoom is at extremes, defer to manual control completely
           // Exit the automatic state machine
@@ -838,7 +843,7 @@
           // Handle automatic zoom with the state machine from CAMERA.md
           switch (framingState) {
             case "IN_SAFE":
-              if (isLeaving) {
+              if (isLeaving && stateTimer >= minStateTime) {
                 // Calculate zoom step based on how far rider is outside the frame
                 const xExcess = Math.max(0, Math.abs(bikerNDC.x) - innerBoxSize.x);
                 const yExcess = Math.max(0, Math.abs(bikerNDC.y) - innerBoxSize.y);
@@ -846,7 +851,7 @@
                 
                 // Scale zoom step based on how far outside the frame (smoother transitions)
                 // More aggressive zoom out when rider is far outside the frame
-                const adaptiveStep = zoomStep * (1 + maxExcess * 2);
+                const adaptiveStep = zoomStep * (1 + maxExcess * 1.5); // Reduced from 2.0 to 1.5
                 
                 nextZoomGoal = Math.min(cameraFOV + adaptiveStep, zoomMax);
                 nextState = "ZOOMING_OUT";
@@ -855,14 +860,9 @@
               break;
               
             case "ZOOMING_OUT":
-              // Add hysteresis margin to avoid oscillation
-              const hysteresisMargin = 0.05; // 5% margin
-              const isWellInsideOuterBox = 
-                Math.abs(bikerNDC.x) < (outerBox.x - hysteresisMargin) && 
-                Math.abs(bikerNDC.y) < (outerBox.y - hysteresisMargin);
-                
-              if (isWellInsideOuterBox) {
+              if (isWellInside && stateTimer >= minStateTime) {
                 nextState = "COOLDOWN";
+                stateTimer = 0;
               }
               break;
               
@@ -870,12 +870,13 @@
               if (stateTimer > stableTime) {
                 nextZoomGoal = baseZoom;
                 nextState = "ZOOMING_IN";
-              } else if (isLeaving) {
+                stateTimer = 0;
+              } else if (isLeaving && stateTimer >= minStateTime) {
                 // Gradual zoom step based on how far outside the frame (smoother)
                 const xExcess = Math.max(0, Math.abs(bikerNDC.x) - innerBoxSize.x);
                 const yExcess = Math.max(0, Math.abs(bikerNDC.y) - innerBoxSize.y);
                 const maxExcess = Math.max(xExcess, yExcess);
-                const adaptiveStep = zoomStep * (1 + maxExcess * 2);
+                const adaptiveStep = zoomStep * (1 + maxExcess * 1.5); // Reduced from 2.0 to 1.5
                 
                 nextZoomGoal = Math.min(cameraFOV + adaptiveStep, zoomMax);
                 nextState = "ZOOMING_OUT";
@@ -884,11 +885,13 @@
               break;
               
             case "ZOOMING_IN":
-              if (isLeaving) {
+              if (isLeaving && stateTimer >= minStateTime) {
                 nextZoomGoal = cameraFOV; // Abort zoom-in
                 nextState = "ZOOMING_OUT";
-              } else if (Math.abs(zoomGoal - cameraFOV) < 0.1) {
+                stateTimer = 0;
+              } else if (Math.abs(zoomGoal - cameraFOV) < 0.1 && stateTimer >= minStateTime) {
                 nextState = "IN_SAFE";
+                stateTimer = 0;
               }
               break;
               
@@ -897,6 +900,7 @@
               console.warn('Invalid framing state:', framingState);
               nextState = "IN_SAFE";
               nextZoomGoal = baseZoom;
+              stateTimer = 0;
           }
         }
         
@@ -904,7 +908,7 @@
         if (heightControl && !isManualZoomActive) {
           const heightValue = parseInt(heightControl.value);
           // Calculate manual influence (0-1 scale, higher at extremes)
-          const manualInfluence = Math.pow(manualZoomAmount / 50, 2) * 0.7; // Squared for non-linear influence
+          const manualInfluence = Math.pow(manualZoomAmount / 50, 2) * 0.5; // Reduced from 0.7 to 0.5
           
           // Calculate manual FOV from height slider
           const manualFOV = baseZoom + ((zoomMax - baseZoom) * heightValue / 100);
@@ -922,6 +926,7 @@
         // Reset to safe defaults
         framingState = "IN_SAFE";
         zoomGoal = baseZoom;
+        stateTimer = 0;
       }
     }
     
@@ -934,8 +939,8 @@
       const zoomAlpha = Math.max(0, Math.min(1, (cameraFOV - baseZoom) / (zoomMax - baseZoom)));
       
       // Update FOV with simple direct approach (removed kFOV reference)
-      // Move directly 40% of the way to target FOV each frame
-      cameraFOV = cameraFOV + (targetFOV - cameraFOV) * 0.4;
+      // Move directly 30% of the way to target FOV each frame (reduced from 40%)
+      cameraFOV = cameraFOV + (targetFOV - cameraFOV) * 0.3;
       
       // Apply safety limits to FOV
       cameraFOV = Math.max(baseZoom, Math.min(zoomMax, cameraFOV));
@@ -943,7 +948,7 @@
       // Predictive factor: How far to keep camera ahead of movement
       // This directly follows where the bike is going
       // Based on the current speed and the route itself
-      let predictiveFactor = 0.80; // 80% of the way to target position
+      let predictiveFactor = 0.70; // Reduced from 0.80 for more stable tracking
       
       // Special case for high viewing angles - use almost direct positioning
       // This keeps the rider in view at all times
@@ -953,9 +958,9 @@
         const angle = 95 - sliderValue; // Convert to pitch
         
         if (angle > 70) { // Very high angles
-          predictiveFactor = 0.95; // Almost direct positioning (95% of the way)
+          predictiveFactor = 0.85; // Reduced from 0.95 for more stability
         } else if (angle > 50) {
-          predictiveFactor = 0.90; // Stronger tracking (90% of the way)
+          predictiveFactor = 0.80; // Reduced from 0.90 for more stability
         }
       }
       
@@ -976,23 +981,30 @@
       // Using existing zoomAlpha variable already calculated above
       const kFOV = kBase * (1 + (kZoomedOutMul - 1) * zoomAlpha);
       
-      // Critical damping coefficient
-      const c = 2 * Math.sqrt(kFOV);
+      // Critical damping coefficient with slight over-damping for stability
+      const c = 2.2 * Math.sqrt(kFOV); // Increased from 2.0 to 2.2 for more damping
       
       // Calculate acceleration for each axis
       const ax = kFOV * dx - c * cameraVel.x;
       const ay = kFOV * dy - c * cameraVel.y;
       const az = kFOV * dz - c * cameraVel.z;
       
-      // Update velocity
-      cameraVel.x = cameraVel.x + ax * dt;
-      cameraVel.y = cameraVel.y + ay * dt;
-      cameraVel.z = cameraVel.z + az * dt;
+      // Update velocity with reduced timestep for stability
+      const stableDt = dt * 0.8; // Reduce effective timestep
+      cameraVel.x = cameraVel.x + ax * stableDt;
+      cameraVel.y = cameraVel.y + ay * stableDt;
+      cameraVel.z = cameraVel.z + az * stableDt;
+      
+      // Apply velocity damping to prevent oscillation
+      const velDamping = 0.95; // Damp velocity each frame
+      cameraVel.x *= velDamping;
+      cameraVel.y *= velDamping;
+      cameraVel.z *= velDamping;
       
       // Update position
-      cameraPos.x = cameraPos.x + cameraVel.x * dt;
-      cameraPos.y = cameraPos.y + cameraVel.y * dt;
-      cameraPos.z = cameraPos.z + cameraVel.z * dt;
+      cameraPos.x = cameraPos.x + cameraVel.x * stableDt;
+      cameraPos.y = cameraPos.y + cameraVel.y * stableDt;
+      cameraPos.z = cameraPos.z + cameraVel.z * stableDt;
       
       // Hard limit on how far the camera can be from the target position
       // This ensures the camera never lags too far behind (safety fallback)
@@ -1029,15 +1041,18 @@
       // Use the same zoom alpha calculation for FOV as we did for position
       // Using the same zoomAlpha variable already calculated above
       
-      // Critical damping coefficient - reuse the same constants
-      const cFOV = 2 * Math.sqrt(kFOV);
+      // Critical damping coefficient with slight over-damping for stability
+      const cFOV = 2.2 * Math.sqrt(kFOV); // Increased from 2.0 to 2.2 for more damping
       
       // Calculate acceleration
       const a = kFOV * (targetFOV - cameraFOV) - cFOV * cameraFOVVel;
       
-      // Update velocity and position
-      cameraFOVVel = cameraFOVVel + a * dt;
-      cameraFOV = cameraFOV + cameraFOVVel * dt;
+      // Update velocity and position with reduced timestep
+      cameraFOVVel = cameraFOVVel + a * stableDt;
+      cameraFOV = cameraFOV + cameraFOVVel * stableDt;
+      
+      // Apply velocity damping to FOV
+      cameraFOVVel *= velDamping;
       
       // Apply safety limits to FOV
       cameraFOV = Math.max(baseZoom, Math.min(zoomMax, cameraFOV));
@@ -1054,8 +1069,8 @@
       // FOV was already updated earlier in the function
       
       // Improved conversion from FOV to mapbox zoom level
-      // With our new settings (FOV 50-75)
-      // FOV 50 -> zoom 18, FOV 75 -> zoom 14
+      // With our new settings (FOV 50-70)
+      // FOV 50 -> zoom 18, FOV 70 -> zoom 14
       const zoom = 22 - ((cameraFOV - 40) / 5);
       
       // Convert to map coordinates
