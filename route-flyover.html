@@ -495,6 +495,13 @@
       // Choose which route coordinates and distances to use based on zoom level
       const distances = shouldUseSmoothedRoute ? smoothedRouteDistances : routeDistances;
       
+      // Debug route selection
+      if (Math.random() < 0.05) { // Log occasionally
+        console.log(`Route selection: useSmoothed=${shouldUseSmoothedRoute}, requestedDistance=${distanceKm.toFixed(1)}km`);
+        console.log(`Regular route: ${routeDistances.length} points, ${routeDistances[routeDistances.length-1].toFixed(1)}km total`);
+        console.log(`Smoothed route: ${smoothedRouteDistances.length} points, ${smoothedRouteDistances[smoothedRouteDistances.length-1].toFixed(1)}km total`);
+      }
+      
       // Safety check to ensure we have valid distances
       if (!distances || distances.length < 2) {
         console.warn('Invalid distances array for route lookup');
@@ -811,7 +818,12 @@
       }
       
       // Check if we've reached the end of the route
-      if (currentRouteDistance >= routeDistances[routeDistances.length - 1] * 1000) { // Convert km to m
+      const maxDistanceKm = routeDistances[routeDistances.length - 1];
+      const maxDistanceMeters = maxDistanceKm * 1000;
+      
+      if (currentRouteDistance >= maxDistanceMeters) { // Convert km to m
+        console.log(`Animation complete - currentRouteDistance: ${currentRouteDistance}m, maxDistance: ${maxDistanceMeters}m (${maxDistanceKm}km)`);
+        console.log(`totalDistance variable: ${totalDistance}km, totalDistanceMeters variable: ${totalDistanceMeters}m`);
         pauseAnimation();
         // Reset button text to "Start" when animation completes
         const toggleBtn = document.getElementById('toggle-btn');
@@ -1049,17 +1061,30 @@
     function updateProgress() {
       if (routeCoordinates.length === 0 || routeDistances.length === 0) return;
       
-      // Calculate progress percentage based on distance
-      const totalDistanceMeters = routeDistances[routeDistances.length - 1] * 1000; // km to m
+      // IMPORTANT: Use the same route selection logic as position calculation
+      const heightControl = document.getElementById('camera-height');
+      const zoomOutAmount = heightControl ? parseInt(heightControl.value) : 50;
+      const shouldUseSmoothedRoute = zoomOutAmount > 50;
+      
+      // Use the same route that calculateSegmentForDistance uses
+      const distances = shouldUseSmoothedRoute ? smoothedRouteDistances : routeDistances;
+      const totalDistanceMeters = distances[distances.length - 1] * 1000; // km to m
       const progress = currentRouteDistance / totalDistanceMeters;
+      
+      // Debug progress calculation occasionally
+      if (Math.random() < 0.01) { // Log occasionally
+        console.log(`Progress calc: currentRouteDistance=${currentRouteDistance}m, totalDistanceMeters=${totalDistanceMeters}m, progress=${(progress*100).toFixed(1)}%`);
+        console.log(`Using ${shouldUseSmoothedRoute ? 'smoothed' : 'regular'} route: ${distances.length} points, ${distances[distances.length - 1].toFixed(1)}km total`);
+      }
       
       // Update progress element
       const progressEl = document.getElementById('progress');
       progressEl.textContent = `${Math.round(progress * 100)}%`;
       
-      // Update distance traveled
+      // Update distance traveled - always show actual geographic distance
       const distanceTraveledEl = document.getElementById('distance-traveled');
-      distanceTraveledEl.textContent = `${(currentRouteDistance / 1000).toFixed(1)} km`;
+      const actualDistanceTraveled = progress * routeDistances[routeDistances.length - 1]; // progress × actual route distance
+      distanceTraveledEl.textContent = `${actualDistanceTraveled.toFixed(1)} km`;
       
       // Update position slider without triggering its change event (unless user is manually adjusting)
       if (!userAdjustingPosition) {
@@ -1730,9 +1755,18 @@
         return;
       }
       
-      // Calculate the distance along the route
-      const totalDistanceMeters = routeDistances[routeDistances.length - 1] * 1000; // km to m
+      // IMPORTANT: Use the same route selection logic as calculateSegmentForDistance
+      // Check zoom level to determine which route to use
+      const heightControl = document.getElementById('camera-height');
+      const zoomOutAmount = heightControl ? parseInt(heightControl.value) : 50;
+      const shouldUseSmoothedRoute = zoomOutAmount > 50;
+      
+      // Use the same route that calculateSegmentForDistance will use
+      const distances = shouldUseSmoothedRoute ? smoothedRouteDistances : routeDistances;
+      const totalDistanceMeters = distances[distances.length - 1] * 1000; // km to m
       currentRouteDistance = positionPercent * totalDistanceMeters;
+      
+      console.log(`Manual position: ${positionPercent.toFixed(2)} × ${(totalDistanceMeters/1000).toFixed(1)}km = ${(currentRouteDistance/1000).toFixed(1)}km (using ${shouldUseSmoothedRoute ? 'smoothed' : 'regular'} route)`);
       
       // Convert current distance to km for comparison with routeDistances
       const currentDistanceKm = currentRouteDistance / 1000;
@@ -2043,6 +2077,8 @@
           currentRouteDistance = Math.max(0, Math.min(currentRouteDistance, totalDistanceMeters));
           
           console.log('Updated currentRouteDistance to:', currentRouteDistance, 'meters');
+          console.log('Total route distance:', totalDistanceMeters, 'meters (', routeDistances[routeDistances.length - 1], 'km)');
+          console.log('Position percent:', positionPercent, '= distance', (currentRouteDistance/1000).toFixed(1), 'km');
         } else {
           // Animation is stopped - use the existing manual positioning function
           updatePositionManually(positionPercent);
