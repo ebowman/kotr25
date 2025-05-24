@@ -294,6 +294,7 @@
       <div class="control-group" style="margin-top: 10px;">
         <button id="toggle-btn">Start</button>
         <button id="reset-btn" disabled>Reset</button>
+        <button id="recenter-btn">Recenter Camera</button>
       </div>
     </div>
     
@@ -1338,6 +1339,7 @@
       // Ensure buttons are disabled during load
       document.getElementById('toggle-btn').disabled = true;
       document.getElementById('reset-btn').disabled = true;
+      document.getElementById('recenter-btn').disabled = true;
       
       try {
         // If map has route layer, remove it
@@ -1537,6 +1539,7 @@
             // Enable buttons
             document.getElementById('toggle-btn').disabled = false;
             document.getElementById('reset-btn').disabled = false;
+            document.getElementById('recenter-btn').disabled = false;
           });
         }
       } catch (error) {
@@ -1544,6 +1547,7 @@
         document.getElementById('loading').style.display = 'none';
         document.getElementById('toggle-btn').disabled = false;
         document.getElementById('reset-btn').disabled = false;
+        document.getElementById('recenter-btn').disabled = false;
       }
     }
     
@@ -1984,6 +1988,40 @@
       
       toggleBtn.addEventListener('click', toggleAnimation);
       resetBtn.addEventListener('click', resetAnimation);
+      
+      // Recenter camera handler
+      const recenterBtn = document.getElementById('recenter-btn');
+      recenterBtn.addEventListener('click', () => {
+        // Get current rider position
+        if (routeCoordinates.length === 0) return;
+        
+        // Calculate current rider position using the same logic as the animation
+        const heightControl = document.getElementById('camera-height');
+        const zoomOutAmount = heightControl ? parseInt(heightControl.value) : 50;
+        const shouldUseSmoothedRoute = zoomOutAmount > 50;
+        const distances = shouldUseSmoothedRoute ? smoothedRouteDistances : routeDistances;
+        const coordinates = shouldUseSmoothedRoute ? smoothedRouteCoordinates : routeCoordinates;
+        
+        const currentDistanceKm = currentRouteDistance / 1000;
+        const segment = calculateSegmentForDistance(currentDistanceKm, false);
+        
+        if (segment && coordinates[segment.afterIdx]) {
+          const beforePoint = coordinates[segment.beforeIdx];
+          const afterPoint = coordinates[segment.afterIdx];
+          const fraction = segment.fraction;
+          
+          // Interpolate current rider position
+          const riderLng = beforePoint[0] + (afterPoint[0] - beforePoint[0]) * fraction;
+          const riderLat = beforePoint[1] + (afterPoint[1] - beforePoint[1]) * fraction;
+          
+          // Smoothly fly to rider position
+          map.easeTo({
+            center: [riderLng, riderLat],
+            zoom: 15, // Nice zoom level to see the rider and surroundings
+            duration: 1000 // 1 second smooth transition
+          });
+        }
+      });
       
       // Camera height handler - updates view immediately
       heightControl.addEventListener('input', () => {
