@@ -348,30 +348,24 @@
     let totalDistanceMeters = 0; // Total distance of the route in meters
     let dt = 1/60; // Physics timestep in seconds (60fps)
     
-    // Camera state variables
-    let cameraPos = { x: 0, y: 0, z: 0 }; // Position
-    let cameraVel = { x: 0, y: 0, z: 0 }; // Velocity for physics-based motion
-    let cameraFOV = 60; // Field of view
-    let cameraFOVVel = 0; // Velocity for FOV physics (spring model)
+    // Camera state variables - simplified
+    let cameraPos = { x: 0, y: 0, z: 0 }; // Current position
+    let cameraFOV = 60; // Current field of view
+    let lastFrameTime = performance.now(); // For deltaTime calculation
     
-    // Camera control parameters based on CAMERA.md
-    let lookAheadFactor = 0.2;  // Less aggressive look-ahead
-    let minLook = 5;  // Minimum look-ahead distance
-    let maxLook = 80;  // Significantly reduced maximum look-ahead for better visibility
-    let verticalOffset = 10;  // Minimal vertical offset to keep rider in view
-    let kBase = 3.0;  // Increased spring stiffness for more responsive camera
-    let kZoomedOutMul = 0.4;  // Moderate damping when zoomed out
-    let zoomStep = 3;  // Moderate FOV increments when zooming out
-    let baseZoom = 50;  // Default FOV - narrower for closer view (mapbox zoom ~17-18)
-    let zoomMax = 75;  // Maximum FOV - now more moderate (mapbox zoom ~14-15)
-    let tightBox = { x: 0.30, y: 0.20 };  // Smaller box to trigger zoom-out sooner
-    let looseBox = { x: 0.45, y: 0.30 };  // More moderate box when zoomed out
-    let outerBox = { x: 0.70, y: 0.70 };  // Smaller outer boundary for better visibility
-    let stableTime = 1.0;  // Quicker recovery time
+    // Simplified camera parameters for smooth motion
+    let lookAheadFactor = 0.05;  // Much less aggressive look-ahead
+    let minLook = 2;  // Minimum look-ahead distance
+    let maxLook = 20;  // Reduced maximum look-ahead for stability
+    let verticalOffset = 5;  // Minimal vertical offset
+    let baseZoom = 50;  // Default FOV
+    let zoomMax = 75;  // Maximum FOV
     
-    // Framing controller state
-    let framingState = "IN_SAFE"; // One of: IN_SAFE, ZOOMING_OUT, COOLDOWN, ZOOMING_IN
-    let stateTimer = 0;
+    // Smoothing parameters
+    let positionSmoothing = 0.08;  // Base position smoothing factor
+    let zoomSmoothing = 0.12;      // Zoom smoothing factor
+    
+    // Simplified zoom control
     let zoomGoal = baseZoom;
     
     // Create multiple levels of route smoothing for dynamic camera behavior
@@ -670,109 +664,27 @@
         };
       }
       
-      // Get the current camera angle
-      const angleControl = document.getElementById('camera-angle');
-      let angle = 45; // Default pitch angle
+      // Simple velocity-based look-ahead calculation
+      const speed = Math.sqrt(bikerVel.x * bikerVel.x + bikerVel.y * bikerVel.y);
       
-      if (angleControl) {
-        const sliderValue = parseInt(angleControl.value);
-        // Calculate inverted angle - when slider is at min (10), we want max angle (85)
-        angle = 95 - sliderValue; // 95 - 10 = 85, 95 - 85 = 10
+      // Much simpler look-ahead: just use speed * lookAheadFactor
+      const lookAhead = Math.min(speed * lookAheadFactor, maxLook);
+      
+      // Simple target point calculation
+      let targetX = bikerPos.x;
+      let targetY = bikerPos.y;
+      
+      if (speed > 0.001) {
+        // Normalize velocity and apply look-ahead
+        const normalizedVelX = bikerVel.x / speed;
+        const normalizedVelY = bikerVel.y / speed;
+        
+        targetX += normalizedVelX * lookAhead;
+        targetY += normalizedVelY * lookAhead;
       }
       
-      // Get current zoom/height level
-      const heightControl = document.getElementById('camera-height');
-      const zoomOutAmount = heightControl ? parseInt(heightControl.value) : 50;
-      
-      // Create a zoom factor (0 = zoomed in, 1 = zoomed out)
-      const zoomFactor = Math.max(0, Math.min(1, zoomOutAmount / 100));
-      
-      // Calculate speed for adaptive behavior
-      const speed = Math.sqrt(
-        bikerVel.x * bikerVel.x + 
-        bikerVel.y * bikerVel.y + 
-        bikerVel.z * bikerVel.z
-      );
-      
-      // Apply reasonable limits to speed
-      const safeSpeed = Math.max(0, Math.min(100, speed));
-      
-      // Enhanced approach with zoom-level awareness
-      let targetX, targetY, targetZ;
-      
-      // Get direction of movement
-      let moveX = 0, moveY = 0, moveZ = 0;
-      if (safeSpeed > 0.001) {
-        moveX = bikerVel.x / safeSpeed;
-        moveY = bikerVel.y / safeSpeed;
-        moveZ = bikerVel.z / safeSpeed;
-        
-        // NEW: Adjust base look-ahead and smoothing based on zoom level
-        // When zoomed out:
-        // 1. Increase look-ahead distance to see more of the route ahead
-        // 2. Apply more damping to camera movements
-        
-        // Adaptive look-ahead distance that changes with zoom level
-        // Zoomed out = look further ahead to see more of the route
-        const zoomedInLookAhead = Math.min(30, Math.max(5, safeSpeed * 1.5));
-        const zoomedOutLookAhead = Math.min(50, Math.max(10, safeSpeed * 2.5));
-        
-        // Blend between the two based on zoom factor
-        const baseLookAhead = zoomedInLookAhead * (1 - zoomFactor) + zoomedOutLookAhead * zoomFactor;
-        
-        // Adjust look-ahead based on viewing angle and zoom factor
-        let lookAhead;
-        if (angle > 75) { // Near vertical
-          // When zoomed out, still need more look-ahead even at vertical angles
-          const minFactor = 0.1 + (zoomFactor * 0.2); // 0.1-0.3 based on zoom
-          lookAhead = baseLookAhead * minFactor;
-        } else if (angle > 60) { // High angle
-          const highFactor = 0.3 + (zoomFactor * 0.2); // 0.3-0.5 based on zoom
-          lookAhead = baseLookAhead * highFactor;
-        } else if (angle > 45) { // Medium-high angle
-          const medHighFactor = 0.5 + (zoomFactor * 0.2); // 0.5-0.7 based on zoom
-          lookAhead = baseLookAhead * medHighFactor;
-        } else if (angle > 30) { // Medium angle
-          const medFactor = 0.7 + (zoomFactor * 0.15); // 0.7-0.85 based on zoom
-          lookAhead = baseLookAhead * medFactor;
-        } else { // Low angle
-          // Slight reduction at max zoom out to prevent seeing too far ahead
-          const lowFactor = 1.0 - (zoomFactor * 0.1); // 1.0-0.9 based on zoom
-          lookAhead = baseLookAhead * lowFactor;
-        }
-        
-        // Adjust vertical offset based on angle and zoom level
-        // Higher offset when zoomed out to see more context
-        const baseVerticalOffset = verticalOffset * (1.0 + zoomFactor * 1.5);
-        const verticalOffsetMultiplier = Math.max(0.5, Math.min(2.0, 2.0 - (angle / 90)));
-        const adaptiveVerticalOffset = baseVerticalOffset * verticalOffsetMultiplier;
-        
-        // Calculate target position with enhanced look-ahead
-        targetX = bikerPos.x + moveX * lookAhead;
-        targetY = bikerPos.y + moveY * lookAhead;
-        targetZ = bikerPos.z + moveZ * lookAhead * 0.5 + adaptiveVerticalOffset;
-      } else {
-        // For stationary or very slow movement
-        
-        // Adjust vertical offset based on zoom level - higher when zoomed out
-        const baseVerticalOffset = verticalOffset * (1.0 + zoomFactor * 1.5);
-        const verticalOffsetMultiplier = Math.max(0.5, Math.min(2.0, 2.0 - (angle / 90)));
-        const adaptiveVerticalOffset = baseVerticalOffset * verticalOffsetMultiplier;
-        
-        // For high angles when stationary, position camera slightly behind rider
-        if (angle > 65) { // Near vertical view
-          // Increase offset when zoomed out for better perspective
-          const positionOffset = 0.00005 * (1.0 + zoomFactor);
-          targetX = bikerPos.x - positionOffset;
-          targetY = bikerPos.y - positionOffset;
-          targetZ = bikerPos.z + adaptiveVerticalOffset;
-        } else {
-          // For lower angles, position directly above
-          targetX = bikerPos.x;
-          targetY = bikerPos.y;
-          targetZ = bikerPos.z + adaptiveVerticalOffset;
-        }
-      }
+      // Simple vertical offset
+      const targetZ = bikerPos.z + verticalOffset;
       
       // Final safety check for NaN values
       if (isNaN(targetX) || isNaN(targetY) || isNaN(targetZ)) {
@@ -791,347 +703,44 @@
       };
     }
     
-    // FRAMING CONTROLLER: Check rider position in viewport and manage zoom
+    // FRAMING CONTROLLER: Simplified - just maintain base zoom
     function framingController(bikerScreenPos) {
-      if (!bikerScreenPos) return;
-      
-      try {
-        // Ensure valid input
-        if (isNaN(bikerScreenPos.x) || isNaN(bikerScreenPos.y)) {
-          console.warn('Invalid biker screen position for framing controller');
-          return;
-        }
-        
-        // Normalize screen coordinates to NDC space (-1 to 1) with safety checks
-        const viewportWidth = map.getContainer().offsetWidth || 1000; // Default fallback
-        const viewportHeight = map.getContainer().offsetHeight || 600; // Default fallback
-        
-        const bikerNDC = {
-          x: (bikerScreenPos.x / viewportWidth) * 2 - 1,
-          y: (bikerScreenPos.y / viewportHeight) * 2 - 1
-        };
-        
-        // Apply reasonable limits to NDC coordinates
-        bikerNDC.x = Math.max(-1.5, Math.min(1.5, bikerNDC.x));
-        bikerNDC.y = Math.max(-1.5, Math.min(1.5, bikerNDC.y));
-        
-        // Calculate zoom alpha (0: zoomed in, 1: zoomed out) with safety limits
-        const zoomRange = Math.max(0.1, zoomMax - baseZoom);
-        const zoomAlpha = Math.max(0, Math.min(1, (cameraFOV - baseZoom) / zoomRange));
-        
-        // Get current angle for adaptive framing
-        const angleControl = document.getElementById('camera-angle');
-        let angle = 45; // Default pitch angle
-        
-        if (angleControl) {
-          const sliderValue = parseInt(angleControl.value);
-          angle = 95 - sliderValue; // 95 - 10 = 85, 95 - 85 = 10
-        }
-        
-        // For high angles, use a tighter framing box
-        // This keeps the rider more centered when looking down
-        let adaptedTightBox, adaptedLooseBox;
-        
-        if (angle > 65) { // Very high angle (near vertical)
-          // Much tighter box to keep rider more centered
-          adaptedTightBox = { 
-            x: tightBox.x * 0.6, 
-            y: tightBox.y * 0.6 
-          };
-          adaptedLooseBox = { 
-            x: looseBox.x * 0.7, 
-            y: looseBox.y * 0.7 
-          };
-        } else if (angle > 45) { // Moderate high angle
-          // Somewhat tighter box
-          adaptedTightBox = { 
-            x: tightBox.x * 0.8, 
-            y: tightBox.y * 0.8 
-          };
-          adaptedLooseBox = { 
-            x: looseBox.x * 0.85, 
-            y: looseBox.y * 0.85 
-          };
-        } else { // Normal angles
-          adaptedTightBox = tightBox;
-          adaptedLooseBox = looseBox;
-        }
-        
-        // Dynamically size the framing box based on zoom level
-        const innerBoxSize = {
-          x: adaptedTightBox.x + (adaptedLooseBox.x - adaptedTightBox.x) * zoomAlpha,
-          y: adaptedTightBox.y + (adaptedLooseBox.y - adaptedTightBox.y) * zoomAlpha
-        };
-        
-        // Add hysteresis to prevent rapid state changes
-        const hysteresisMargin = zoomHysteresis;
-        const isLeaving = 
-          Math.abs(bikerNDC.x) > (innerBoxSize.x + hysteresisMargin) || 
-          Math.abs(bikerNDC.y) > (innerBoxSize.y + hysteresisMargin);
-        
-        const isWellInside = 
-          Math.abs(bikerNDC.x) < (innerBoxSize.x - hysteresisMargin) && 
-          Math.abs(bikerNDC.y) < (innerBoxSize.y - hysteresisMargin);
-        
-        // Check if biker is inside outer box with hysteresis
-        const isInsideOuterBox = 
-          Math.abs(bikerNDC.x) < (outerBox.x - hysteresisMargin) && 
-          Math.abs(bikerNDC.y) < (outerBox.y - hysteresisMargin);
-        
-        // Check if manual zoom level is active via slider
-        const heightControl = document.getElementById('camera-height');
-        let isManualZoomActive = false;
-        let manualZoomAmount = 0;
-        
-        if (heightControl) {
-          const heightValue = parseInt(heightControl.value);
-          // If user has moved slider significantly from center (25-75 range), consider manual zoom active
-          isManualZoomActive = heightValue < 25 || heightValue > 75;
-          // Calculate how far from center (0-50, where 50 = at either extreme)
-          manualZoomAmount = Math.abs(heightValue - 50);
-        }
-        
-        // Frame timer with minimum state time
-        stateTimer += dt;
-        
-        // Cap timer to prevent overflow
-        stateTimer = Math.min(stateTimer, 10); 
-        
-        // Make state transitions more robust
-        let nextState = framingState;
-        let nextZoomGoal = zoomGoal;
-        
-        // State machine from CAMERA.md, modified to respect manual zoom and prevent oscillation
-        if (isManualZoomActive && manualZoomAmount > 40) {
-          // When manual zoom is at extremes, defer to manual control completely
-          // Exit the automatic state machine
-          const manualZoomFOV = baseZoom + ((zoomMax - baseZoom) * heightControl.value / 100);
-          nextZoomGoal = manualZoomFOV;
-          nextState = "IN_SAFE"; // Reset state
-        } else {
-          // Handle automatic zoom with the state machine from CAMERA.md
-          switch (framingState) {
-            case "IN_SAFE":
-              if (isLeaving && stateTimer >= minStateTime) {
-                // Calculate zoom step based on how far rider is outside the frame
-                const xExcess = Math.max(0, Math.abs(bikerNDC.x) - innerBoxSize.x);
-                const yExcess = Math.max(0, Math.abs(bikerNDC.y) - innerBoxSize.y);
-                const maxExcess = Math.max(xExcess, yExcess);
-                
-                // Scale zoom step based on how far outside the frame (smoother transitions)
-                // More aggressive zoom out when rider is far outside the frame
-                const adaptiveStep = zoomStep * (1 + maxExcess * 1.5); // Reduced from 2.0 to 1.5
-                
-                nextZoomGoal = Math.min(cameraFOV + adaptiveStep, zoomMax);
-                nextState = "ZOOMING_OUT";
-                stateTimer = 0;
-              }
-              break;
-              
-            case "ZOOMING_OUT":
-              if (isWellInside && stateTimer >= minStateTime) {
-                nextState = "COOLDOWN";
-                stateTimer = 0;
-              }
-              break;
-              
-            case "COOLDOWN":
-              if (stateTimer > stableTime) {
-                nextZoomGoal = baseZoom;
-                nextState = "ZOOMING_IN";
-                stateTimer = 0;
-              } else if (isLeaving && stateTimer >= minStateTime) {
-                // Gradual zoom step based on how far outside the frame (smoother)
-                const xExcess = Math.max(0, Math.abs(bikerNDC.x) - innerBoxSize.x);
-                const yExcess = Math.max(0, Math.abs(bikerNDC.y) - innerBoxSize.y);
-                const maxExcess = Math.max(xExcess, yExcess);
-                const adaptiveStep = zoomStep * (1 + maxExcess * 1.5); // Reduced from 2.0 to 1.5
-                
-                nextZoomGoal = Math.min(cameraFOV + adaptiveStep, zoomMax);
-                nextState = "ZOOMING_OUT";
-                stateTimer = 0;
-              }
-              break;
-              
-            case "ZOOMING_IN":
-              if (isLeaving && stateTimer >= minStateTime) {
-                nextZoomGoal = cameraFOV; // Abort zoom-in
-                nextState = "ZOOMING_OUT";
-                stateTimer = 0;
-              } else if (Math.abs(zoomGoal - cameraFOV) < 0.1 && stateTimer >= minStateTime) {
-                nextState = "IN_SAFE";
-                stateTimer = 0;
-              }
-              break;
-              
-            default:
-              // Handle invalid state by resetting
-              console.warn('Invalid framing state:', framingState);
-              nextState = "IN_SAFE";
-              nextZoomGoal = baseZoom;
-              stateTimer = 0;
-          }
-        }
-        
-        // Blend automatic and manual zoom control
-        if (heightControl && !isManualZoomActive) {
-          const heightValue = parseInt(heightControl.value);
-          // Calculate manual influence (0-1 scale, higher at extremes)
-          const manualInfluence = Math.pow(manualZoomAmount / 50, 2) * 0.5; // Reduced from 0.7 to 0.5
-          
-          // Calculate manual FOV from height slider
-          const manualFOV = baseZoom + ((zoomMax - baseZoom) * heightValue / 100);
-          
-          // Blend automatic and manual control
-          nextZoomGoal = nextZoomGoal * (1 - manualInfluence) + manualFOV * manualInfluence;
-        }
-        
-        // Update state
-        framingState = nextState;
-        zoomGoal = nextZoomGoal;
-        
-      } catch (e) {
-        console.warn('Error in framing controller:', e);
-        // Reset to safe defaults
-        framingState = "IN_SAFE";
-        zoomGoal = baseZoom;
-        stateTimer = 0;
-      }
+      // Keep zoom at base level - manual controls will override if needed
+      zoomGoal = baseZoom;
     }
     
-    // CAMERA SOLVER: Predictive direct-follow camera system
-    function updateCameraPhysics(targetPos, targetFOV) {
+    // CAMERA SOLVER: Simple exponential smoothing for silky smooth movement
+    function updateCameraPhysics(targetPos, targetFOV, deltaTime) {
       // Get current manual zoom setting
       const heightControl = document.getElementById('camera-height');
-      let manualFOV = targetFOV;
+      let desiredFOV = targetFOV;
       
       if (heightControl) {
         const heightValue = parseInt(heightControl.value);
         const heightRatio = heightValue / 100;
-        manualFOV = baseZoom + ((zoomMax - baseZoom) * heightRatio);
+        desiredFOV = baseZoom + ((zoomMax - baseZoom) * heightRatio);
       }
       
       // Apply safety limits to FOV
-      manualFOV = Math.max(baseZoom, Math.min(zoomMax, manualFOV));
+      desiredFOV = Math.max(baseZoom, Math.min(zoomMax, desiredFOV));
       
-      // Calculate zoom alpha (0: zoomed in, 1: zoomed out)
+      // Calculate zoom alpha (0: zoomed in, 1: zoomed out) for adaptive smoothing
       const zoomAlpha = Math.max(0, Math.min(1, (cameraFOV - baseZoom) / (zoomMax - baseZoom)));
       
-      // Update FOV with simple direct approach
-      // Move directly 30% of the way to target FOV each frame
-      cameraFOV = cameraFOV + (manualFOV - cameraFOV) * 0.3;
+      // Adaptive smoothing: faster when zoomed in, slower when zoomed out
+      const adaptivePositionSmoothing = positionSmoothing + (0.15 * (1 - zoomAlpha));
       
-      // Apply safety limits to FOV
-      cameraFOV = Math.max(baseZoom, Math.min(zoomMax, cameraFOV));
+      // Simple exponential smoothing for position - frame rate independent
+      const frameRateAdjustment = Math.min(1, deltaTime * 60); // Normalize to 60fps
+      const actualPositionSmoothing = 1 - Math.pow(1 - adaptivePositionSmoothing, frameRateAdjustment);
       
-      // Predictive factor: How far to keep camera ahead of movement
-      // This directly follows where the bike is going
-      // Based on the current speed and the route itself
-      let predictiveFactor = 0.70; // Reduced from 0.80 for more stable tracking
+      cameraPos.x += (targetPos.x - cameraPos.x) * actualPositionSmoothing;
+      cameraPos.y += (targetPos.y - cameraPos.y) * actualPositionSmoothing;
+      cameraPos.z += (targetPos.z - cameraPos.z) * actualPositionSmoothing;
       
-      // Special case for high viewing angles - use almost direct positioning
-      // This keeps the rider in view at all times
-      const angleControl = document.getElementById('camera-angle');
-      if (angleControl) {
-        const sliderValue = parseInt(angleControl.value);
-        const angle = 95 - sliderValue; // Convert to pitch
-        
-        if (angle > 70) { // Very high angles
-          predictiveFactor = 0.85; // Reduced from 0.95 for more stability
-        } else if (angle > 50) {
-          predictiveFactor = 0.80; // Reduced from 0.90 for more stability
-        }
-      }
-      
-      // Implement critically-damped spring physics for camera position (per CAMERA.md)
-      // For each axis (x,y,z):
-      // k = stiffness(zoomLevel)
-      // c = 2√k (critical damping)
-      // a = k * (goal - pos) - c * vel
-      // vel_new = vel + a * dt
-      // pos_new = pos + vel_new * dt
-      
-      const dx = targetPos.x - cameraPos.x;
-      const dy = targetPos.y - cameraPos.y;
-      const dz = targetPos.z - cameraPos.z;
-      
-      // Calculate stiffness based on zoom level - higher when zoomed in
-      // "Stiffness scales linearly with inverse zoom: k = kBase * lerp(1, kZoomedOutMul, zoomAlpha)"
-      // Using existing zoomAlpha variable already calculated above
-      const kFOV = kBase * (1 + (kZoomedOutMul - 1) * zoomAlpha);
-      
-      // Critical damping coefficient with slight over-damping for stability
-      const c = 2.2 * Math.sqrt(kFOV); // Increased from 2.0 to 2.2 for more damping
-      
-      // Calculate acceleration for each axis
-      const ax = kFOV * dx - c * cameraVel.x;
-      const ay = kFOV * dy - c * cameraVel.y;
-      const az = kFOV * dz - c * cameraVel.z;
-      
-      // Update velocity with reduced timestep for stability
-      const stableDt = dt * 0.8; // Reduce effective timestep
-      cameraVel.x = cameraVel.x + ax * stableDt;
-      cameraVel.y = cameraVel.y + ay * stableDt;
-      cameraVel.z = cameraVel.z + az * stableDt;
-      
-      // Apply velocity damping to prevent oscillation
-      const velDamping = 0.95; // Damp velocity each frame
-      cameraVel.x *= velDamping;
-      cameraVel.y *= velDamping;
-      cameraVel.z *= velDamping;
-      
-      // Update position
-      cameraPos.x = cameraPos.x + cameraVel.x * stableDt;
-      cameraPos.y = cameraPos.y + cameraVel.y * stableDt;
-      cameraPos.z = cameraPos.z + cameraVel.z * stableDt;
-      
-      // Hard limit on how far the camera can be from the target position
-      // This ensures the camera never lags too far behind (safety fallback)
-      const maxDistance = 0.0003;
-      const distance = Math.sqrt(dx*dx + dy*dy);
-      
-      if (distance > maxDistance) {
-        // Move camera directly toward target at max distance (emergency correction)
-        const scale = maxDistance / distance;
-        cameraPos.x = targetPos.x - dx * scale;
-        cameraPos.y = targetPos.y - dy * scale;
-        
-        // Reset velocity when performing emergency correction to avoid oscillation
-        cameraVel.x = 0;
-        cameraVel.y = 0;
-      }
-      
-      // Manual zoom blending is now handled in the framing controller
-      // This is a cleaner architecture where the framing controller decides the
-      // target FOV and the camera solver just applies physics to reach it
-      
-      // Implement proper spring physics for FOV as specified in CAMERA.md
-      // k = stiffness(zoomLevel)
-      // c = 2√k (critical damping)
-      // a = k * (goal - pos) - c * vel
-      // vel_new = vel + a * dt
-      // pos_new = pos + vel_new * dt
-
-      // Initialize FOV velocity if not exists
-      if (typeof cameraFOVVel === 'undefined') {
-        cameraFOVVel = 0;
-      }
-
-      // Use the same zoom alpha calculation for FOV as we did for position
-      // Using the same zoomAlpha variable already calculated above
-      
-      // Critical damping coefficient with slight over-damping for stability
-      const cFOV = 2.2 * Math.sqrt(kFOV); // Increased from 2.0 to 2.2 for more damping
-      
-      // Calculate acceleration
-      const a = kFOV * (targetFOV - cameraFOV) - cFOV * cameraFOVVel;
-      
-      // Update velocity and position with reduced timestep
-      cameraFOVVel = cameraFOVVel + a * stableDt;
-      cameraFOV = cameraFOV + cameraFOVVel * stableDt;
-      
-      // Apply velocity damping to FOV
-      cameraFOVVel *= velDamping;
+      // Simple exponential smoothing for FOV
+      const actualZoomSmoothing = 1 - Math.pow(1 - zoomSmoothing, frameRateAdjustment);
+      cameraFOV += (desiredFOV - cameraFOV) * actualZoomSmoothing;
       
       // Apply safety limits to FOV
       cameraFOV = Math.max(baseZoom, Math.min(zoomMax, cameraFOV));
@@ -1186,7 +795,11 @@
     
     // Clean, optimized animation function that implements the architecture from CAMERA.md
     // Enhanced to handle dynamic route smoothing based on zoom level
-    function animateRoute() {
+    function animateRoute(currentTime = performance.now()) {
+      // Calculate deltaTime for frame-rate independent animation
+      const deltaTime = (currentTime - lastFrameTime) / 1000; // Convert to seconds
+      lastFrameTime = currentTime;
+      
       // Safety check to avoid errors if route data isn't loaded
       if (!routeCoordinates || routeCoordinates.length === 0 || !routeDistances || routeDistances.length === 0) {
         pauseAnimation();
@@ -1214,10 +827,10 @@
         return;
       }
       
-      // Speed in meters per frame - consistent regardless of point spacing
-      // animationSpeed is a multiplier (0.1 to 1.0)
-      // Base speed of 5 meters per frame * speed multiplier
-      const distanceIncrement = 5 * animationSpeed;
+      // Frame-rate independent speed calculation
+      // Base speed of 300 meters per second * speed multiplier * deltaTime
+      const baseSpeedMPS = 300; // meters per second
+      const distanceIncrement = baseSpeedMPS * animationSpeed * deltaTime;
       
       // Update current distance along route
       currentRouteDistance += distanceIncrement;
@@ -1225,13 +838,7 @@
       // Convert to km for route lookup
       const currentDistanceKm = currentRouteDistance / 1000;
       
-      // Get current zoom level to determine route smoothing
-      const heightControl = document.getElementById('camera-height');
-      const zoomOutAmount = heightControl ? parseInt(heightControl.value) : 50;
-      
-      // Calculate blend factor between raw and smoothed routes based on zoom level
-      // 0 = use raw route, 1 = use fully smoothed route
-      const smoothingBlendFactor = Math.max(0, Math.min(1, (zoomOutAmount - 40) / 60));
+      // Camera now always uses the actual route for authentic movement
       
       // Get segment for RIDER position - always use raw route for rider
       // This ensures the rider always stays on the actual route
@@ -1264,25 +871,13 @@
       currentPoint = riderBeforeIdx;
       currentPointFloat = riderBeforeIdx + riderFraction;
       
-      // Get CAMERA LOOK-AHEAD point - uses smoothed route when zoomed out
-      // This is the key improvement - camera follows smoothed route at high zoom levels
-      // while rider stays on actual route
-      const cameraSegment = calculateSegmentForDistance(currentDistanceKm, smoothingBlendFactor > 0.3);
+      // Calculate bearing direction from actual route (no smoothing for camera)
+      // Use the actual rider points for bearing calculation for authentic movement
+      const lookAheadIdx = Math.min(riderAfterIdx + 1, routeCoordinates.length - 1);
+      const nextPoint = routeCoordinates[lookAheadIdx];
       
-      // Determine which route coordinates to use for camera look-ahead
-      const useSmoothedForCamera = cameraSegment.useSmoothedRoute;
-      const cameraCoords = useSmoothedForCamera ? smoothedRouteCoordinates : routeCoordinates;
-      
-      // Get look-ahead points for camera direction from appropriate route
-      const cameraBeforePoint = cameraCoords[cameraSegment.beforeIdx];
-      const cameraAfterPoint = cameraCoords[cameraSegment.afterIdx];
-      
-      // Now calculate look-ahead point for bearing using the selected route
-      const lookAheadIdx = Math.min(cameraSegment.afterIdx + 1, cameraCoords.length - 1);
-      const nextCameraPoint = cameraCoords[lookAheadIdx];
-      
-      // Calculate the bearing between current and next point from the appropriate route
-      const bearing = calculateBearing(cameraBeforePoint, cameraAfterPoint);
+      // Calculate the bearing between current and next point
+      const bearing = calculateBearing(riderBeforePoint, riderAfterPoint);
       
       // ===== CAMERA SYSTEM ARCHITECTURE PER CAMERA.md =====
       
@@ -1293,20 +888,20 @@
         z: interpolatedPoint[2]
       };
       
-      // Use camera coordinates for velocity calculation when zoomed out
+      // Calculate velocity using actual route points
       let bikerVel;
       // Safety check for valid points
-      if (!nextCameraPoint || !Array.isArray(nextCameraPoint) || nextCameraPoint.length < 2 || 
-          !cameraAfterPoint || !Array.isArray(cameraAfterPoint) || cameraAfterPoint.length < 2) {
+      if (!nextPoint || !Array.isArray(nextPoint) || nextPoint.length < 2 || 
+          !riderAfterPoint || !Array.isArray(riderAfterPoint) || riderAfterPoint.length < 2) {
         console.warn('Invalid points for velocity calculation');
         // Provide a safe default velocity
         bikerVel = { x: 0, y: 0, z: 0 };
       } else {
-        // Calculate velocity with scaled magnitude using camera route for direction
-        const dx = nextCameraPoint[0] - cameraAfterPoint[0];
-        const dy = nextCameraPoint[1] - cameraAfterPoint[1];
-        const dz = (nextCameraPoint.length > 2 && cameraAfterPoint.length > 2) ? 
-                    (nextCameraPoint[2] - cameraAfterPoint[2]) : 0;
+        // Calculate velocity with scaled magnitude using actual route for direction
+        const dx = nextPoint[0] - riderAfterPoint[0];
+        const dy = nextPoint[1] - riderAfterPoint[1];
+        const dz = (nextPoint.length > 2 && riderAfterPoint.length > 2) ? 
+                    (nextPoint[2] - riderAfterPoint[2]) : 0;
         
         // Scale velocity by animation speed, but keep it reasonable
         const scaleFactor = Math.min(1.0, animationSpeed) * 0.0005;
@@ -1326,10 +921,14 @@
       framingController(bikerScreenPos);
       
       // 4. CAMERA SOLVER
-      const newCameraState = updateCameraPhysics(targetPoint, zoomGoal);
+      const newCameraState = updateCameraPhysics(targetPoint, zoomGoal, deltaTime);
       
-      // Apply the new camera state
-      map.jumpTo(newCameraState);
+      // Apply the new camera state with smooth transitions
+      map.easeTo({
+        ...newCameraState,
+        duration: 0, // Frame-based animation
+        easing: t => t // Linear for smoothest motion
+      });
       
       // Update UI elements
       updateProgress();
