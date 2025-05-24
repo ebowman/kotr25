@@ -242,7 +242,7 @@
       <div class="control-group">
         <label for="camera-angle">View Angle:</label>
         <div class="slider-container">
-          <input type="range" id="camera-angle" min="10" max="85" step="1" value="25">
+          <input type="range" id="camera-angle" min="10" max="85" step="1" value="35">
           <div class="range-labels">
             <span>Low</span>
             <span>High</span>
@@ -343,7 +343,7 @@
     let smoothedRouteDistances = []; // Array to store distances for smoothed route
     let animationSpeed = 0.5;
     let cameraHeight = 25; // Default camera height (slider position, not actual meters)
-    let cameraAngle = 25; // Default camera angle (pitch) in degrees (inverted from slider value of 45)
+    let cameraAngle = 60; // Default camera angle (pitch) in degrees (calculated from slider value of 35: 95-35=60)
     let currentRouteDistance = 0; // Current distance along route in meters
     let totalDistanceMeters = 0; // Total distance of the route in meters
     let dt = 1/60; // Physics timestep in seconds (60fps)
