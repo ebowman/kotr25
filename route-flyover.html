@@ -253,7 +253,7 @@
       <div class="control-group">
         <label for="speed-control">Animation Speed:</label>
         <div class="slider-container">
-          <input type="range" id="speed-control" min="0.1" max="1" step="0.1" value="0.5">
+          <input type="range" id="speed-control" min="0.1" max="5" step="0.1" value="0.5">
           <div class="range-labels">
             <span>Slow</span>
             <span>Fast</span>
@@ -373,135 +373,53 @@
       // Skip if too few points
       if (coordinates.length <= 10) return [...coordinates];
       
-      // ===== ENHANCED MULTI-LEVEL SMOOTHING APPROACH =====
-      // Key improvements:
-      // 1. More aggressive smoothing by default with larger window sizes
-      // 2. Reduced sensitivity to small elevation changes
-      // 3. Less preservation of minor twists and turns
-      // 4. Gentler Gaussian falloff to include more distant points
-      
-      // Determine base smoothing factors based on route length and complexity
+      // Create multiple smoothed versions for different zoom levels
+      return createTrulySmoothedRoute(coordinates);
+    }
+    
+    function createTrulySmoothedRoute(coordinates) {
+      // Create TRULY smooth curves using large moving averages
+      // This creates flowing, cinematic paths perfect for zoomed-out views
       const routeLength = coordinates.length;
-      
-      // Significantly increased base smoothing factor for larger smoothing windows
-      // This helps prevent following every small twist and turn, especially when zoomed out
-      const baseSmoothing = Math.max(5, Math.floor(routeLength / 200));
-      
-      // Create multi-resolution smoothed paths
       const smoothed = [];
       
-      // Always include the first point
-      smoothed.push([...coordinates[0]]);
+      // Large smoothing window for silky smooth curves - ignores minor deviations
+      const smoothingWindow = Math.max(20, Math.floor(routeLength / 50)); // Much larger window
       
-      // Adapt point inclusion based on route length
-      // For longer routes, skip more points while maintaining overall route shape
-      const skipFactor = Math.max(1, Math.ceil(routeLength / 1000)); 
-      
-      // Process interior points with adaptive smoothing
-      for (let i = skipFactor; i < routeLength - skipFactor; i += skipFactor) {
-        // Create adaptive smoothing that varies based on position in the route:
-        // - More aggressive smoothing in the middle of the route
-        // - Less aggressive smoothing near endpoints
-        // - Reduced sensitivity to small elevation changes
-        
-        // Calculate position-based smoothing factor
-        // Distance from either end determines smoothing strength
-        const positionFactor = Math.min(
-          i / routeLength,                // Distance from start (0-1)
-          (routeLength - i) / routeLength // Distance from end (0-1)
-        ) * 3;                            // Reduced from 4 to make smoothing more consistent
-        
-        // Detect elevation significance - important for hills and downhill sections
-        // But now with reduced sensitivity to small changes
-        let elevationSignificance = 0;
-        
-        if (coordinates[i].length > 2 && 
-            i > 0 && i < routeLength - 1 && 
-            coordinates[i-1].length > 2 && coordinates[i+1].length > 2) {
-          
-          // Calculate elevation change rate (gradient) over a slightly larger span
-          // This helps reduce sensitivity to tiny elevation changes
-          const prevIdx = Math.max(0, i - 2);
-          const nextIdx = Math.min(routeLength - 1, i + 2);
-          
-          const elevChange = Math.abs(coordinates[i][2] - coordinates[prevIdx][2]);
-          const elevChangeNext = Math.abs(coordinates[nextIdx][2] - coordinates[i][2]);
-          
-          // Only consider significant elevation changes
-          // Increased threshold from 10 to 15 to ignore smaller elevation changes
-          // Higher values = less smoothing near significant elevation changes
-          elevationSignificance = Math.min(1, (elevChange + elevChangeNext) / 15);
-        }
-        
-        // Calculate final window size for this point
-        // Significantly larger window sizes for more aggressive smoothing
-        // Smaller window = less smoothing, larger window = more smoothing
-        const windowSize = Math.max(8, Math.round(
-          baseSmoothing * (1 + positionFactor) * (1 - elevationSignificance * 0.3)
-        ));
-        
-        // === WEIGHTED GAUSSIAN SMOOTHING with gentler falloff ===
+      // Process every point with heavy smoothing
+      for (let i = 0; i < routeLength; i++) {
         let sumLng = 0;
         let sumLat = 0;
         let sumEle = 0;
-        let totalWeight = 0;
+        let count = 0;
         
-        // Calculate weighted average with gentler Gaussian falloff
-        for (let j = i - windowSize; j <= i + windowSize; j++) {
-          if (j >= 0 && j < routeLength) {
-            // Calculate distance-based weight with Gaussian falloff
-            const distFactor = Math.abs(i - j) / windowSize;
-            
-            // REDUCED Gaussian falloff exponent from -5.5 to -3.0
-            // More gentle falloff allows more distant points to influence the result
-            // This creates smoother curves with less sensitivity to small changes
-            const weight = Math.exp(-3.0 * distFactor * distFactor);
-            
-            // Add weighted contribution
-            sumLng += coordinates[j][0] * weight;
-            sumLat += coordinates[j][1] * weight;
-            totalWeight += weight;
-            
-            // Handle elevation data with reduced sensitivity to preserve only major features
-            if (coordinates[j].length > 2) {
-              // For elevation, use modified weighting to preserve only major hills
-              // Reduced from 0.5 to 0.3 for less preservation of small elevation changes
-              const elevWeight = weight * (1 - elevationSignificance * 0.3);
-              sumEle += coordinates[j][2] * elevWeight;
-            }
+        // Large moving average window
+        const start = Math.max(0, i - smoothingWindow);
+        const end = Math.min(routeLength - 1, i + smoothingWindow);
+        
+        for (let j = start; j <= end; j++) {
+          sumLng += coordinates[j][0];
+          sumLat += coordinates[j][1];
+          if (coordinates[j].length > 2) {
+            sumEle += coordinates[j][2];
           }
+          count++;
         }
         
-        // Create the smoothed point with normalized weights
+        // Create smoothed point
         const smoothPoint = [
-          sumLng / totalWeight,
-          sumLat / totalWeight
+          sumLng / count,
+          sumLat / count
         ];
         
-        // Add elevation if it exists (with modified smoothing)
         if (coordinates[i].length > 2) {
-          // If elevation significance is high, use less smoothing to preserve feature
-          // But with reduced sensitivity compared to before
-          const rawElevation = coordinates[i][2];
-          const smoothedElevation = sumEle / totalWeight;
-          
-          // Blend between raw and smoothed elevation
-          // Reduced preservation factor from 0.7 to 0.5
-          // More significant elevation changes are still preserved but less aggressively
-          const blendedElevation = 
-            (smoothedElevation * (1 - elevationSignificance * 0.5)) + 
-            (rawElevation * elevationSignificance * 0.5);
-          
-          smoothPoint.push(blendedElevation);
+          smoothPoint.push(sumEle / count);
         }
         
         smoothed.push(smoothPoint);
       }
       
-      // Always include the last point
-      smoothed.push([...coordinates[routeLength - 1]]);
-      
-      console.log(`Route smoothed from ${routeLength} to ${smoothed.length} points with enhanced smoothing algorithm`);
+      console.log(`Route smoothed from ${routeLength} to ${smoothed.length} points with TRUE curve smoothing`);
       return smoothed;
     }
     
@@ -587,6 +505,9 @@
       fraction = segmentLength > 0 ? 
         (distanceKm - distances[beforeIdx]) / segmentLength : 0;
       
+      // Ensure fraction is always valid (0-1)
+      fraction = Math.max(0, Math.min(1, fraction));
+      
       return { 
         beforeIdx, 
         afterIdx, 
@@ -667,8 +588,14 @@
       // Simple velocity-based look-ahead calculation
       const speed = Math.sqrt(bikerVel.x * bikerVel.x + bikerVel.y * bikerVel.y);
       
-      // Much simpler look-ahead: just use speed * lookAheadFactor
-      const lookAhead = Math.min(speed * lookAheadFactor, maxLook);
+      // Adaptive look-ahead based on zoom level - much gentler when zoomed out
+      const heightControl = document.getElementById('camera-height');
+      const zoomOutAmount = heightControl ? parseInt(heightControl.value) : 50;
+      const currentZoomFactor = Math.max(0, Math.min(1, zoomOutAmount / 100));
+      
+      // Reduce look-ahead significantly when zoomed out for smooth cinematic movement
+      const adaptiveLookAheadFactor = lookAheadFactor * (1 - currentZoomFactor * 0.8);
+      const lookAhead = Math.min(speed * adaptiveLookAheadFactor, maxLook * (1 - currentZoomFactor * 0.5));
       
       // Simple target point calculation
       let targetX = bikerPos.x;
@@ -710,7 +637,7 @@
     }
     
     // CAMERA SOLVER: Simple exponential smoothing for silky smooth movement
-    function updateCameraPhysics(targetPos, targetFOV, deltaTime) {
+    function updateCameraPhysics(targetPos, targetFOV, deltaTime, useSmoothedForCamera = false) {
       // Get current manual zoom setting
       const heightControl = document.getElementById('camera-height');
       let desiredFOV = targetFOV;
@@ -728,7 +655,11 @@
       const zoomAlpha = Math.max(0, Math.min(1, (cameraFOV - baseZoom) / (zoomMax - baseZoom)));
       
       // Adaptive smoothing: faster when zoomed in, slower when zoomed out
-      const adaptivePositionSmoothing = positionSmoothing + (0.15 * (1 - zoomAlpha));
+      // Also more aggressive smoothing when using smoothed routes for camera targeting
+      const baseAdaptiveSmoothing = positionSmoothing + (0.15 * (1 - zoomAlpha));
+      const adaptivePositionSmoothing = useSmoothedForCamera ? 
+        baseAdaptiveSmoothing * 0.7 : // Even smoother when following smoothed route
+        baseAdaptiveSmoothing;
       
       // Simple exponential smoothing for position - frame rate independent
       const frameRateAdjustment = Math.min(1, deltaTime * 60); // Normalize to 60fps
@@ -797,8 +728,11 @@
     // Enhanced to handle dynamic route smoothing based on zoom level
     function animateRoute(currentTime = performance.now()) {
       // Calculate deltaTime for frame-rate independent animation
-      const deltaTime = (currentTime - lastFrameTime) / 1000; // Convert to seconds
+      let deltaTime = (currentTime - lastFrameTime) / 1000; // Convert to seconds
       lastFrameTime = currentTime;
+      
+      // Cap deltaTime to prevent large jumps (e.g., when tab was in background)
+      deltaTime = Math.min(deltaTime, 1/30); // Max 33ms frame time for smooth movement
       
       // Safety check to avoid errors if route data isn't loaded
       if (!routeCoordinates || routeCoordinates.length === 0 || !routeDistances || routeDistances.length === 0) {
@@ -827,9 +761,9 @@
         return;
       }
       
-      // Frame-rate independent speed calculation
-      // Base speed of 300 meters per second * speed multiplier * deltaTime
-      const baseSpeedMPS = 300; // meters per second
+      // Frame-rate independent speed calculation  
+      // Realistic cycling speed: ~15-25 m/s for visualization (54-90 km/h)
+      const baseSpeedMPS = 20; // meters per second (more realistic for smooth movement)
       const distanceIncrement = baseSpeedMPS * animationSpeed * deltaTime;
       
       // Update current distance along route
@@ -838,7 +772,15 @@
       // Convert to km for route lookup
       const currentDistanceKm = currentRouteDistance / 1000;
       
-      // Camera now always uses the actual route for authentic movement
+      // Get current zoom level to determine camera behavior
+      const heightControl = document.getElementById('camera-height');
+      const zoomOutAmount = heightControl ? parseInt(heightControl.value) : 50;
+      
+      // Calculate zoom factor (0 = zoomed in, 1 = zoomed out)
+      const zoomFactor = Math.max(0, Math.min(1, zoomOutAmount / 100));
+      
+      // Use smoothed route for camera when significantly zoomed out
+      const useSmoothedForCamera = zoomFactor > 0.5;
       
       // Get segment for RIDER position - always use raw route for rider
       // This ensures the rider always stays on the actual route
@@ -871,13 +813,29 @@
       currentPoint = riderBeforeIdx;
       currentPointFloat = riderBeforeIdx + riderFraction;
       
-      // Calculate bearing direction from actual route (no smoothing for camera)
-      // Use the actual rider points for bearing calculation for authentic movement
-      const lookAheadIdx = Math.min(riderAfterIdx + 1, routeCoordinates.length - 1);
-      const nextPoint = routeCoordinates[lookAheadIdx];
+      // Get camera targeting points - use smoothed route when zoomed out for smooth camera movement
+      let cameraCoords, cameraSegment, cameraBeforePoint, cameraAfterPoint, nextCameraPoint;
       
-      // Calculate the bearing between current and next point
-      const bearing = calculateBearing(riderBeforePoint, riderAfterPoint);
+      if (useSmoothedForCamera && smoothedRouteCoordinates.length > 0) {
+        // Use smoothed route for camera targeting when zoomed out
+        cameraSegment = calculateSegmentForDistance(currentDistanceKm, true);
+        cameraCoords = smoothedRouteCoordinates;
+        cameraBeforePoint = cameraCoords[cameraSegment.beforeIdx];
+        cameraAfterPoint = cameraCoords[cameraSegment.afterIdx];
+        const lookAheadIdx = Math.min(cameraSegment.afterIdx + 1, cameraCoords.length - 1);
+        nextCameraPoint = cameraCoords[lookAheadIdx];
+      } else {
+        // Use actual route for camera targeting when zoomed in
+        cameraSegment = riderSegment;
+        cameraCoords = routeCoordinates;
+        cameraBeforePoint = riderBeforePoint;
+        cameraAfterPoint = riderAfterPoint;
+        const lookAheadIdx = Math.min(riderAfterIdx + 1, routeCoordinates.length - 1);
+        nextCameraPoint = routeCoordinates[lookAheadIdx];
+      }
+      
+      // Calculate the bearing using camera targeting points
+      const bearing = calculateBearing(cameraBeforePoint, cameraAfterPoint);
       
       // ===== CAMERA SYSTEM ARCHITECTURE PER CAMERA.md =====
       
@@ -888,23 +846,32 @@
         z: interpolatedPoint[2]
       };
       
-      // Calculate velocity using actual route points
+      // Calculate velocity using camera targeting points for smooth movement
       let bikerVel;
       // Safety check for valid points
-      if (!nextPoint || !Array.isArray(nextPoint) || nextPoint.length < 2 || 
-          !riderAfterPoint || !Array.isArray(riderAfterPoint) || riderAfterPoint.length < 2) {
+      if (!nextCameraPoint || !Array.isArray(nextCameraPoint) || nextCameraPoint.length < 2 || 
+          !cameraAfterPoint || !Array.isArray(cameraAfterPoint) || cameraAfterPoint.length < 2) {
         console.warn('Invalid points for velocity calculation');
         // Provide a safe default velocity
         bikerVel = { x: 0, y: 0, z: 0 };
       } else {
-        // Calculate velocity with scaled magnitude using actual route for direction
-        const dx = nextPoint[0] - riderAfterPoint[0];
-        const dy = nextPoint[1] - riderAfterPoint[1];
-        const dz = (nextPoint.length > 2 && riderAfterPoint.length > 2) ? 
-                    (nextPoint[2] - riderAfterPoint[2]) : 0;
+        // Calculate raw velocity
+        let dx = nextCameraPoint[0] - cameraAfterPoint[0];
+        let dy = nextCameraPoint[1] - cameraAfterPoint[1];
+        let dz = (nextCameraPoint.length > 2 && cameraAfterPoint.length > 2) ? 
+                  (nextCameraPoint[2] - cameraAfterPoint[2]) : 0;
+        
+        // Apply additional real-time smoothing when zoomed out for ultra-smooth movement
+        if (useSmoothedForCamera && zoomFactor > 0.7) {
+          // Very heavy smoothing for velocity when significantly zoomed out
+          const smoothingFactor = 0.3 * zoomFactor; // More smoothing = smaller changes
+          dx *= smoothingFactor;
+          dy *= smoothingFactor;
+          dz *= smoothingFactor;
+        }
         
         // Scale velocity by animation speed, but keep it reasonable
-        const scaleFactor = Math.min(1.0, animationSpeed) * 0.0005;
+        const scaleFactor = Math.min(5.0, animationSpeed) * 0.0005;
         
         bikerVel = {
           x: dx * scaleFactor,
@@ -921,7 +888,7 @@
       framingController(bikerScreenPos);
       
       // 4. CAMERA SOLVER
-      const newCameraState = updateCameraPhysics(targetPoint, zoomGoal, deltaTime);
+      const newCameraState = updateCameraPhysics(targetPoint, zoomGoal, deltaTime, useSmoothedForCamera);
       
       // Apply the new camera state with smooth transitions
       map.easeTo({
