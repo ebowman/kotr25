@@ -2099,6 +2099,7 @@
         if (isDragging) {
           updatePositionFromEvent(e);
           e.preventDefault();
+          e.stopPropagation(); // Prevent event from bubbling to map
         }
       });
       
@@ -2108,6 +2109,7 @@
           setTimeout(() => {
             userAdjustingPosition = false;
           }, 100);
+          e.stopPropagation(); // Prevent event from bubbling to map
         }
       });
       
@@ -2123,6 +2125,7 @@
         if (isDragging) {
           updatePositionFromEvent(e);
           e.preventDefault();
+          e.stopPropagation(); // Prevent event from bubbling to map
         }
       });
       
@@ -2132,6 +2135,7 @@
           setTimeout(() => {
             userAdjustingPosition = false;
           }, 100);
+          e.stopPropagation(); // Prevent event from bubbling to map
         }
       });
       
