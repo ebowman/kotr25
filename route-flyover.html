@@ -274,8 +274,9 @@
       
       <div class="control-group">
         <label for="position-slider">Position:</label>
-        <div class="slider-container">
+        <div class="slider-container" style="position: relative;">
           <input type="range" id="position-slider" min="0" max="100" step="0.1" value="0">
+          <div id="position-overlay" style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; z-index: 10; cursor: pointer; background: transparent;" title="Click to jump to position"></div>
           <div class="range-labels">
             <span>Start</span>
             <span>End</span>
@@ -363,6 +364,7 @@
     let cameraHeight = 25; // Default camera height (slider position, not actual meters)
     let cameraAngle = 60; // Default camera angle (pitch) in degrees (calculated from slider value of 35: 95-35=60)
     let followPath = true; // Whether to use helicopter camera or standard Mapbox controls
+    let userAdjustingPosition = false; // Flag to prevent automatic slider updates during manual adjustment
     let currentRouteDistance = 0; // Current distance along route in meters
     let totalDistanceMeters = 0; // Total distance of the route in meters
     let dt = 1/60; // Physics timestep in seconds (60fps)
@@ -1059,9 +1061,15 @@
       const distanceTraveledEl = document.getElementById('distance-traveled');
       distanceTraveledEl.textContent = `${(currentRouteDistance / 1000).toFixed(1)} km`;
       
-      // Update position slider without triggering its change event
-      const positionSlider = document.getElementById('position-slider');
-      positionSlider.value = progress * 100;
+      // Update position slider without triggering its change event (unless user is manually adjusting)
+      if (!userAdjustingPosition) {
+        const positionSlider = document.getElementById('position-slider');
+        const newValue = progress * 100;
+        positionSlider.value = newValue;
+        
+      } else {
+        console.log('Skipping automatic slider update - user is adjusting position');
+      }
       
       // Update elevation marker
       updateElevationMarker(progress);
@@ -2006,13 +2014,45 @@
         console.error('Follow path toggle element not found');
       }
       
-      // Position slider handler
-      positionSlider.addEventListener('input', () => {
-        // Only allow manual positioning when animation is not running
-        if (!animationId) {
-          const positionPercent = parseFloat(positionSlider.value) / 100;
+      // Position control via overlay click - bypasses slider event issues
+      const positionOverlay = document.getElementById('position-overlay');
+      
+      positionOverlay.addEventListener('click', (e) => {
+        console.log('Position overlay clicked');
+        
+        // Calculate position based on click location
+        const rect = positionOverlay.getBoundingClientRect();
+        const clickX = e.clientX - rect.left;
+        const width = rect.width;
+        const positionPercent = Math.max(0, Math.min(1, clickX / width));
+        
+        console.log('Calculated position:', positionPercent, 'from click at', clickX, 'width', width);
+        
+        // Temporarily disable automatic updates
+        userAdjustingPosition = true;
+        
+        // Update slider value
+        positionSlider.value = positionPercent * 100;
+        
+        if (animationId) {
+          // Animation is running - update the current position directly
+          const totalDistanceMeters = routeDistances[routeDistances.length - 1] * 1000; // km to m
+          currentRouteDistance = positionPercent * totalDistanceMeters;
+          
+          // Clamp to valid range
+          currentRouteDistance = Math.max(0, Math.min(currentRouteDistance, totalDistanceMeters));
+          
+          console.log('Updated currentRouteDistance to:', currentRouteDistance, 'meters');
+        } else {
+          // Animation is stopped - use the existing manual positioning function
           updatePositionManually(positionPercent);
         }
+        
+        // Re-enable automatic updates after a delay
+        setTimeout(() => {
+          userAdjustingPosition = false;
+          console.log('Re-enabled automatic updates');
+        }, 500);
       });
     });
     
