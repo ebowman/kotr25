@@ -343,7 +343,7 @@
     let smoothedRouteDistances = []; // Array to store distances for smoothed route
     let animationSpeed = 0.5;
     let cameraHeight = 25; // Default camera height (slider position, not actual meters)
-    let cameraAngle = 50; // Default camera angle (pitch) in degrees (inverted from slider value of 45)
+    let cameraAngle = 25; // Default camera angle (pitch) in degrees (inverted from slider value of 45)
     let currentRouteDistance = 0; // Current distance along route in meters
     let totalDistanceMeters = 0; // Total distance of the route in meters
     let dt = 1/60; // Physics timestep in seconds (60fps)
@@ -352,6 +352,10 @@
     let cameraPos = { x: 0, y: 0, z: 0 }; // Current position
     let cameraFOV = 60; // Current field of view
     let lastFrameTime = performance.now(); // For deltaTime calculation
+    let currentBearing = 0; // Current smoothed bearing for gradual direction changes
+    let cameraVelocity = { bearing: 0, speed: 0 }; // Camera movement velocity for momentum
+    let currentWaypoint = null; // Current target waypoint camera is flying toward
+    let waypointUpdateTimer = 0; // Timer to update waypoint occasionally
     
     // Simplified camera parameters for smooth motion
     let lookAheadFactor = 0.05;  // Much less aggressive look-ahead
@@ -364,9 +368,33 @@
     // Smoothing parameters
     let positionSmoothing = 0.08;  // Base position smoothing factor
     let zoomSmoothing = 0.12;      // Zoom smoothing factor
+    let bearingSmoothing = 0.15;   // Bearing smoothing factor for camera direction
     
     // Simplified zoom control
     let zoomGoal = baseZoom;
+    
+    // Helper function to smooth bearing changes with proper angle wraparound
+    function smoothBearing(currentBearing, targetBearing, smoothingFactor, deltaTime) {
+      // Normalize angles to 0-360 range
+      const normalizeBearing = (angle) => ((angle % 360) + 360) % 360;
+      
+      const current = normalizeBearing(currentBearing);
+      const target = normalizeBearing(targetBearing);
+      
+      // Calculate the shortest angular distance
+      let diff = target - current;
+      if (diff > 180) diff -= 360;
+      if (diff < -180) diff += 360;
+      
+      // Apply frame-rate independent smoothing
+      const frameRateAdjustment = Math.min(1, deltaTime * 60);
+      const actualSmoothingFactor = 1 - Math.pow(1 - smoothingFactor, frameRateAdjustment);
+      
+      // Calculate new bearing
+      const newBearing = current + (diff * actualSmoothingFactor);
+      
+      return normalizeBearing(newBearing);
+    }
     
     // Create multiple levels of route smoothing for dynamic camera behavior
     function createSmoothedRoute(coordinates) {
@@ -508,6 +536,11 @@
       // Ensure fraction is always valid (0-1)
       fraction = Math.max(0, Math.min(1, fraction));
       
+      // Debug interpolation occasionally
+      if (Math.random() < 0.005) { // Log very occasionally
+        console.log(`Segment ${beforeIdx}-${afterIdx}: length=${(segmentLength*1000).toFixed(1)}m, fraction=${fraction.toFixed(3)}`);
+      }
+      
       return { 
         beforeIdx, 
         afterIdx, 
@@ -571,13 +604,11 @@
       }
     }
     
-    // TARGET-POINT MODULE: Enhanced to better handle zoomed out views
+    // TARGET-POINT MODULE: Calculate where camera position should be
     function calculateTargetPoint(bikerPos, bikerVel) {
       // Safety checks for NaN values
-      if (isNaN(bikerPos.x) || isNaN(bikerPos.y) || isNaN(bikerPos.z) ||
-          isNaN(bikerVel.x) || isNaN(bikerVel.y) || isNaN(bikerVel.z)) {
-        console.warn('NaN values detected in biker position or velocity');
-        // Return a safe fallback position
+      if (isNaN(bikerPos.x) || isNaN(bikerPos.y) || isNaN(bikerPos.z)) {
+        console.warn('NaN values detected in biker position');
         return {
           x: bikerPos.x || 0,
           y: bikerPos.y || 0,
@@ -585,48 +616,59 @@
         };
       }
       
-      // Simple velocity-based look-ahead calculation
-      const speed = Math.sqrt(bikerVel.x * bikerVel.x + bikerVel.y * bikerVel.y);
-      
-      // Adaptive look-ahead based on zoom level - much gentler when zoomed out
+      // Get current zoom level
       const heightControl = document.getElementById('camera-height');
       const zoomOutAmount = heightControl ? parseInt(heightControl.value) : 50;
       const currentZoomFactor = Math.max(0, Math.min(1, zoomOutAmount / 100));
       
-      // Reduce look-ahead significantly when zoomed out for smooth cinematic movement
-      const adaptiveLookAheadFactor = lookAheadFactor * (1 - currentZoomFactor * 0.8);
-      const lookAhead = Math.min(speed * adaptiveLookAheadFactor, maxLook * (1 - currentZoomFactor * 0.5));
+      // Calculate how far ahead on the route to position the camera
+      // Use altitude-based look-ahead like the bearing calculation
+      const currentDistanceKm = currentRouteDistance / 1000;
+      const altitudeFactor = Math.max(0.1, Math.min(1.0, (cameraFOV - baseZoom) / (zoomMax - baseZoom)));
+      const lookAheadDistance = currentDistanceKm + (0.1 + altitudeFactor * 0.8); // 0.1-0.9km based on altitude
       
-      // Simple target point calculation
-      let targetX = bikerPos.x;
-      let targetY = bikerPos.y;
+      const clampedLookAheadDistance = Math.min(lookAheadDistance, routeDistances[routeDistances.length - 1]);
       
-      if (speed > 0.001) {
-        // Normalize velocity and apply look-ahead
-        const normalizedVelX = bikerVel.x / speed;
-        const normalizedVelY = bikerVel.y / speed;
+      // Find the point on the route at this distance
+      const lookAheadSegment = calculateSegmentForDistance(clampedLookAheadDistance, false); // Use actual route
+      const lookAheadCoords = routeCoordinates;
+      
+      if (lookAheadSegment && lookAheadCoords[lookAheadSegment.afterIdx]) {
+        const beforePoint = lookAheadCoords[lookAheadSegment.beforeIdx];
+        const afterPoint = lookAheadCoords[lookAheadSegment.afterIdx];
+        const fraction = lookAheadSegment.fraction;
         
-        targetX += normalizedVelX * lookAhead;
-        targetY += normalizedVelY * lookAhead;
+        // Interpolate the look-ahead point on the route
+        let targetX = beforePoint[0] + (afterPoint[0] - beforePoint[0]) * fraction;
+        let targetY = beforePoint[1] + (afterPoint[1] - beforePoint[1]) * fraction;
+        const targetZ = (beforePoint[2] || 0) + ((afterPoint[2] || 0) - (beforePoint[2] || 0)) * fraction + verticalOffset;
+        
+        // CRITICAL: Adjust camera position to keep biker centered in viewport
+        // Calculate direction from camera to biker
+        const cameraToBikerX = bikerPos.x - targetX;
+        const cameraToBikerY = bikerPos.y - targetY;
+        const distanceToBiker = Math.sqrt(cameraToBikerX * cameraToBikerX + cameraToBikerY * cameraToBikerY);
+        
+        if (distanceToBiker > 0.0001) { // Avoid division by zero
+          // Calculate desired camera distance based on zoom level
+          const desiredDistance = currentZoomFactor > 0.5 ? 
+            0.0008 + currentZoomFactor * 0.002 : // Further back when zoomed out
+            0.0003 + currentZoomFactor * 0.0005; // Closer when zoomed in
+          
+          // Adjust camera position to maintain desired distance from biker
+          const scaleFactor = desiredDistance / distanceToBiker;
+          targetX = bikerPos.x - (cameraToBikerX * scaleFactor);
+          targetY = bikerPos.y - (cameraToBikerY * scaleFactor);
+        }
+        
+        return { x: targetX, y: targetY, z: targetZ };
       }
       
-      // Simple vertical offset
-      const targetZ = bikerPos.z + verticalOffset;
-      
-      // Final safety check for NaN values
-      if (isNaN(targetX) || isNaN(targetY) || isNaN(targetZ)) {
-        console.warn('NaN values detected in target calculation');
-        return {
-          x: bikerPos.x || 0,
-          y: bikerPos.y || 0,
-          z: (bikerPos.z || 0) + verticalOffset
-        };
-      }
-      
+      // Fallback to biker position
       return {
-        x: targetX,
-        y: targetY,
-        z: targetZ
+        x: bikerPos.x,
+        y: bikerPos.y,
+        z: bikerPos.z + verticalOffset
       };
     }
     
@@ -637,7 +679,7 @@
     }
     
     // CAMERA SOLVER: Simple exponential smoothing for silky smooth movement
-    function updateCameraPhysics(targetPos, targetFOV, deltaTime, useSmoothedForCamera = false) {
+    function updateCameraPhysics(targetPos, targetFOV, deltaTime, useSmoothedForCamera = false, bearing = 0) {
       // Get current manual zoom setting
       const heightControl = document.getElementById('camera-height');
       let desiredFOV = targetFOV;
@@ -676,14 +718,8 @@
       // Apply safety limits to FOV
       cameraFOV = Math.max(baseZoom, Math.min(zoomMax, cameraFOV));
       
-      // Calculate bearing, ensuring it doesn't swing wildly
-      let bearing;
-      try {
-        bearing = calculateBearing([cameraPos.x, cameraPos.y], [targetPos.x, targetPos.y]);
-      } catch (e) {
-        // If calculation fails, maintain current bearing
-        bearing = map.getBearing();
-      }
+      // Use the bearing passed in from the animation loop (don't recalculate!)
+      // This bearing has already been smoothed and calculated with inertia
       
       // FOV was already updated earlier in the function
       
@@ -766,6 +802,11 @@
       const baseSpeedMPS = 20; // meters per second (more realistic for smooth movement)
       const distanceIncrement = baseSpeedMPS * animationSpeed * deltaTime;
       
+      // Debug speed consistency
+      if (Math.random() < 0.01) { // Log occasionally
+        console.log(`Speed: ${(baseSpeedMPS * animationSpeed).toFixed(1)} m/s, deltaTime: ${deltaTime.toFixed(3)}s, increment: ${distanceIncrement.toFixed(2)}m`);
+      }
+      
       // Update current distance along route
       currentRouteDistance += distanceIncrement;
       
@@ -806,6 +847,15 @@
         interpolatedPoint[2] = 0;
       }
       
+      // Debug position calculation occasionally
+      if (Math.random() < 0.005) { // Log very occasionally
+        const usedDistances = riderSegment.useSmoothedRoute ? smoothedRouteDistances : routeDistances;
+        const routeSegmentDistance = (usedDistances[riderAfterIdx] - usedDistances[riderBeforeIdx]) * 1000; // km to m
+        const expectedPosition = usedDistances[riderBeforeIdx] + (riderFraction * (usedDistances[riderAfterIdx] - usedDistances[riderBeforeIdx]));
+        const actualPosition = currentRouteDistance / 1000; // m to km
+        console.log(`Position: segment ${riderBeforeIdx}-${riderAfterIdx}, fraction=${riderFraction.toFixed(3)}, route segment=${routeSegmentDistance.toFixed(1)}m, expected=${expectedPosition.toFixed(3)}km, actual=${actualPosition.toFixed(3)}km`);
+      }
+      
       // Update the rider marker position
       updatePointPosition(interpolatedPoint);
       
@@ -834,8 +884,59 @@
         nextCameraPoint = routeCoordinates[lookAheadIdx];
       }
       
-      // Calculate the bearing using camera targeting points
-      const bearing = calculateBearing(cameraBeforePoint, cameraAfterPoint);
+      // FORWARD-LOOKING CAMERA: Look ahead on route, not back at biker
+      
+      // Calculate where biker will be further ahead on the route
+      // Look-ahead distance based on camera altitude (like real helicopter pilot)
+      const altitudeFactor = Math.max(0.1, Math.min(1.0, (cameraFOV - baseZoom) / (zoomMax - baseZoom)));
+      const forwardLookDistance = currentDistanceKm + (0.2 + altitudeFactor * 4.0); // 0.2-4.2km based on altitude
+        
+      const clampedForwardDistance = Math.min(forwardLookDistance, routeDistances[routeDistances.length - 1]);
+      
+      // Get the forward point on the route
+      const forwardSegment = calculateSegmentForDistance(clampedForwardDistance, false);
+      const forwardCoords = routeCoordinates;
+      
+      let targetBearing = currentBearing; // Default: keep current direction
+      
+      if (forwardSegment && forwardCoords[forwardSegment.afterIdx]) {
+        const beforePoint = forwardCoords[forwardSegment.beforeIdx];
+        const afterPoint = forwardCoords[forwardSegment.afterIdx];
+        const fraction = forwardSegment.fraction;
+        
+        // Interpolate the forward point
+        const forwardX = beforePoint[0] + (afterPoint[0] - beforePoint[0]) * fraction;
+        const forwardY = beforePoint[1] + (afterPoint[1] - beforePoint[1]) * fraction;
+        
+        // Calculate bearing toward this forward point (where biker is going)
+        targetBearing = calculateBearing([cameraPos.x, cameraPos.y], [forwardX, forwardY]);
+      }
+      
+      if (zoomFactor > 0.5) {
+        // ZOOMED OUT: Camera has strong inertia and barely responds
+        const bearingError = ((targetBearing - currentBearing + 540) % 360) - 180;
+        
+        // Only make tiny corrections if significantly off-course
+        let correction = 0;
+        if (Math.abs(bearingError) > 15) {
+          correction = Math.sign(bearingError) * 0.05; // Fixed 0.05 degree correction
+        }
+        
+        // Apply correction with massive momentum
+        cameraVelocity.bearing = cameraVelocity.bearing * 0.999 + correction * 0.001;
+        cameraVelocity.bearing = Math.max(-0.1, Math.min(0.1, cameraVelocity.bearing));
+        
+      } else {
+        // ZOOMED IN: More responsive tracking
+        const bearingError = ((targetBearing - currentBearing + 540) % 360) - 180;
+        const correction = bearingError * 0.01;
+        cameraVelocity.bearing = cameraVelocity.bearing * 0.9 + correction * 0.1;
+        cameraVelocity.bearing = Math.max(-2.0, Math.min(2.0, cameraVelocity.bearing));
+      }
+      
+      // Apply velocity to bearing
+      currentBearing = currentBearing + cameraVelocity.bearing;
+      const bearing = currentBearing;
       
       // ===== CAMERA SYSTEM ARCHITECTURE PER CAMERA.md =====
       
@@ -888,7 +989,7 @@
       framingController(bikerScreenPos);
       
       // 4. CAMERA SOLVER
-      const newCameraState = updateCameraPhysics(targetPoint, zoomGoal, deltaTime, useSmoothedForCamera);
+      const newCameraState = updateCameraPhysics(targetPoint, zoomGoal, deltaTime, useSmoothedForCamera, bearing);
       
       // Apply the new camera state with smooth transitions
       map.easeTo({
@@ -1222,6 +1323,14 @@
         // Log route information
         console.log(`Loaded route ${routeFile} with ${routeCoordinates.length} points and ${totalDistance.toFixed(1)}km total distance`);
         
+        // Debug: Check if route distances are consistent
+        if (routeDistances.length > 10) {
+          for (let i = 1; i < Math.min(11, routeDistances.length); i++) {
+            const segmentDist = routeDistances[i] - routeDistances[i-1];
+            console.log(`Segment ${i}: ${(segmentDist * 1000).toFixed(1)}m`);
+          }
+        }
+        
         // Calculate smoothed route coordinates for camera
         smoothedRouteCoordinates = createSmoothedRoute(routeCoordinates);
         
@@ -1298,6 +1407,10 @@
             
             // Reset camera state
             cameraFOV = baseZoom;
+            currentBearing = initialBearing; // Initialize bearing for smooth transitions
+            cameraVelocity = { bearing: 0, speed: 0 }; // Reset camera momentum
+            currentWaypoint = null; // Reset waypoint
+            waypointUpdateTimer = 0; // Reset timer
           } else {
             // Fallback for routes with fewer points
             cameraPos = {
@@ -1305,6 +1418,10 @@
               y: routeCoordinates[0][1],
               z: (routeCoordinates[0][2] || 0) + verticalOffset
             };
+            currentBearing = 0; // Initialize bearing for smooth transitions
+            cameraVelocity = { bearing: 0, speed: 0 }; // Reset camera momentum
+            currentWaypoint = null; // Reset waypoint
+            waypointUpdateTimer = 0; // Reset timer
           }
           
           // When map is ready, add terrain and layers
