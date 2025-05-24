@@ -83,6 +83,17 @@
       flex-direction: column;
       gap: 8px;
     }
+    .control-group label input[type="checkbox"] {
+      margin-right: 8px;
+      transform: scale(1.2);
+    }
+    .control-group label {
+      display: flex;
+      align-items: center;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 500;
+    }
     .route-info {
       background: white;
       border-radius: 8px;
@@ -272,6 +283,13 @@
         </div>
       </div>
       
+      <div class="control-group">
+        <label>
+          <input type="checkbox" id="follow-path-toggle" checked>
+          Follow Path (Camera tracks rider)
+        </label>
+      </div>
+      
       <div class="control-group" style="margin-top: 10px;">
         <button id="toggle-btn">Start</button>
         <button id="reset-btn" disabled>Reset</button>
@@ -344,6 +362,7 @@
     let animationSpeed = 0.5;
     let cameraHeight = 25; // Default camera height (slider position, not actual meters)
     let cameraAngle = 60; // Default camera angle (pitch) in degrees (calculated from slider value of 35: 95-35=60)
+    let followPath = true; // Whether to use helicopter camera or standard Mapbox controls
     let currentRouteDistance = 0; // Current distance along route in meters
     let totalDistanceMeters = 0; // Total distance of the route in meters
     let dt = 1/60; // Physics timestep in seconds (60fps)
@@ -995,22 +1014,25 @@
         };
       }
       
-      // 2. TARGET-POINT MODULE
-      const targetPoint = calculateTargetPoint(bikerPos, bikerVel);
-      
-      // 3. FRAMING CONTROLLER
-      const bikerScreenPos = getBikerScreenPosition();
-      framingController(bikerScreenPos);
-      
-      // 4. CAMERA SOLVER
-      const newCameraState = updateCameraPhysics(targetPoint, zoomGoal, deltaTime, useSmoothedForCamera, bearing);
-      
-      // Apply the new camera state with smooth transitions
-      map.easeTo({
-        ...newCameraState,
-        duration: 0, // Frame-based animation
-        easing: t => t // Linear for smoothest motion
-      });
+      // CAMERA SYSTEM: Only update camera if followPath is enabled
+      if (followPath) {
+        // 2. TARGET-POINT MODULE
+        const targetPoint = calculateTargetPoint(bikerPos, bikerVel);
+        
+        // 3. FRAMING CONTROLLER
+        const bikerScreenPos = getBikerScreenPosition();
+        framingController(bikerScreenPos);
+        
+        // 4. CAMERA SOLVER
+        const newCameraState = updateCameraPhysics(targetPoint, zoomGoal, deltaTime, useSmoothedForCamera, bearing);
+        
+        // Apply the new camera state with smooth transitions
+        map.easeTo({
+          ...newCameraState,
+          duration: 0, // Frame-based animation
+          easing: t => t // Linear for smoothest motion
+        });
+      }
       
       // Update UI elements
       updateProgress();
@@ -1232,6 +1254,15 @@
       // Add navigation controls
       map.addControl(new mapboxgl.NavigationControl(), 'top-right');
       
+      // Initially disable map interactions since followPath defaults to true
+      map.boxZoom.disable();
+      map.scrollZoom.disable();
+      map.dragPan.disable();
+      map.dragRotate.disable();
+      map.keyboard.disable();
+      map.doubleClickZoom.disable();
+      map.touchZoomRotate.disable();
+      
       // Initialize the camera position and velocity
       map.on('load', () => {
         cameraPos = {
@@ -1242,6 +1273,17 @@
         cameraVel = { x: 0, y: 0, z: 0 };
         cameraFOV = baseZoom;
         cameraFOVVel = 0; // Initialize velocity for spring physics
+      });
+      
+      // Add click-to-toggle functionality for follow path
+      map.on('click', (e) => {
+        console.log('Map clicked, current followPath:', followPath);
+        const followPathToggle = document.getElementById('follow-path-toggle');
+        if (followPathToggle) {
+          followPathToggle.checked = !followPathToggle.checked;
+          followPathToggle.dispatchEvent(new Event('change'));
+        }
+        e.preventDefault();
       });
     }
     
@@ -1930,6 +1972,39 @@
       speedControl.addEventListener('input', () => {
         animationSpeed = parseFloat(speedControl.value);
       });
+      
+      // Follow path toggle handler
+      const followPathToggle = document.getElementById('follow-path-toggle');
+      if (followPathToggle) {
+        followPathToggle.addEventListener('change', () => {
+          followPath = followPathToggle.checked;
+          console.log('Follow path toggled:', followPath);
+          
+          // When disabling follow path, enable map interaction
+          if (!followPath) {
+            console.log('Enabling map interactions');
+            map.boxZoom.enable();
+            map.scrollZoom.enable();
+            map.dragPan.enable();
+            map.dragRotate.enable();
+            map.keyboard.enable();
+            map.doubleClickZoom.enable();
+            map.touchZoomRotate.enable();
+          } else {
+            console.log('Disabling map interactions');
+            // When enabling follow path, disable map interaction to avoid conflicts
+            map.boxZoom.disable();
+            map.scrollZoom.disable();
+            map.dragPan.disable();
+            map.dragRotate.disable();
+            map.keyboard.disable();
+            map.doubleClickZoom.disable();
+            map.touchZoomRotate.disable();
+          }
+        });
+      } else {
+        console.error('Follow path toggle element not found');
+      }
       
       // Position slider handler
       positionSlider.addEventListener('input', () => {
