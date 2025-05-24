@@ -358,9 +358,7 @@
     let totalDistance = 0;
     let elevationGain = 0;
     let routeCoordinates = [];
-    let smoothedRouteCoordinates = []; // Smoothed version of coordinates for camera movement when zoomed out
     let routeDistances = []; // Array to store cumulative distances along route
-    let smoothedRouteDistances = []; // Array to store distances for smoothed route
     let animationSpeed = 0.5;
     let cameraHeight = 25; // Default camera height (slider position, not actual meters)
     let cameraAngle = 60; // Default camera angle (pitch) in degrees (calculated from slider value of 35: 95-35=60)
@@ -418,90 +416,13 @@
       return normalizeBearing(newBearing);
     }
     
-    // Create multiple levels of route smoothing for dynamic camera behavior
-    function createSmoothedRoute(coordinates) {
-      // Skip if too few points
-      if (coordinates.length <= 10) return [...coordinates];
-      
-      // Create multiple smoothed versions for different zoom levels
-      return createTrulySmoothedRoute(coordinates);
-    }
-    
-    function createTrulySmoothedRoute(coordinates) {
-      // Create TRULY smooth curves using large moving averages
-      // This creates flowing, cinematic paths perfect for zoomed-out views
-      const routeLength = coordinates.length;
-      const smoothed = [];
-      
-      // Large smoothing window for silky smooth curves - ignores minor deviations
-      const smoothingWindow = Math.max(20, Math.floor(routeLength / 50)); // Much larger window
-      
-      // Process every point with heavy smoothing
-      for (let i = 0; i < routeLength; i++) {
-        let sumLng = 0;
-        let sumLat = 0;
-        let sumEle = 0;
-        let count = 0;
-        
-        // Large moving average window
-        const start = Math.max(0, i - smoothingWindow);
-        const end = Math.min(routeLength - 1, i + smoothingWindow);
-        
-        for (let j = start; j <= end; j++) {
-          sumLng += coordinates[j][0];
-          sumLat += coordinates[j][1];
-          if (coordinates[j].length > 2) {
-            sumEle += coordinates[j][2];
-          }
-          count++;
-        }
-        
-        // Create smoothed point
-        const smoothPoint = [
-          sumLng / count,
-          sumLat / count
-        ];
-        
-        if (coordinates[i].length > 2) {
-          smoothPoint.push(sumEle / count);
-        }
-        
-        smoothed.push(smoothPoint);
-      }
-      
-      console.log(`Route smoothed from ${routeLength} to ${smoothed.length} points with TRUE curve smoothing`);
-      return smoothed;
-    }
     
     // Helper function to efficiently calculate segment data for any distance
     // Uses binary search for much faster lookups, important for smooth animation
-    function calculateSegmentForDistance(distanceKm, useSmoothedRoute = false) {
-      // Dynamically determine whether to use smoothed route based on zoom level
-      // When zoomed out (high FOV), use smoothed route; when zoomed in, use regular route
-      let shouldUseSmoothedRoute = useSmoothedRoute;
+    function calculateSegmentForDistance(distanceKm) {
       
-      // Allow dynamic route selection based on camera height/zoom during animation
-      if (!useSmoothedRoute) {
-        const heightControl = document.getElementById('camera-height');
-        if (heightControl) {
-          // Get height value (1-100); higher values = more zoomed out
-          const zoomOutAmount = parseInt(heightControl.value);
-          
-          // Use smoothed route when zoomed out beyond a threshold (>50 = zoomed out)
-          // For values higher than 50, start blending in the smoothed route
-          shouldUseSmoothedRoute = zoomOutAmount > 50;
-        }
-      }
-      
-      // Choose which route coordinates and distances to use based on zoom level
-      const distances = shouldUseSmoothedRoute ? smoothedRouteDistances : routeDistances;
-      
-      // Debug route selection
-      if (Math.random() < 0.05) { // Log occasionally
-        console.log(`Route selection: useSmoothed=${shouldUseSmoothedRoute}, requestedDistance=${distanceKm.toFixed(1)}km`);
-        console.log(`Regular route: ${routeDistances.length} points, ${routeDistances[routeDistances.length-1].toFixed(1)}km total`);
-        console.log(`Smoothed route: ${smoothedRouteDistances.length} points, ${smoothedRouteDistances[smoothedRouteDistances.length-1].toFixed(1)}km total`);
-      }
+      // Use regular route distances
+      const distances = routeDistances;
       
       // Safety check to ensure we have valid distances
       if (!distances || distances.length < 2) {
@@ -573,8 +494,7 @@
       return { 
         beforeIdx, 
         afterIdx, 
-        fraction,
-        useSmoothedRoute: shouldUseSmoothedRoute
+        fraction
       };
     }
 
@@ -720,7 +640,7 @@
     }
     
     // CAMERA SOLVER: Simple exponential smoothing for silky smooth movement
-    function updateCameraPhysics(targetPos, targetFOV, deltaTime, useSmoothedForCamera = false, bearing = 0) {
+    function updateCameraPhysics(targetPos, targetFOV, deltaTime, bearing = 0) {
       // Get current manual zoom setting
       const heightControl = document.getElementById('camera-height');
       let desiredFOV = targetFOV;
@@ -738,11 +658,7 @@
       const zoomAlpha = Math.max(0, Math.min(1, (cameraFOV - baseZoom) / (zoomMax - baseZoom)));
       
       // Adaptive smoothing: faster when zoomed in, slower when zoomed out
-      // Also more aggressive smoothing when using smoothed routes for camera targeting
-      const baseAdaptiveSmoothing = positionSmoothing + (0.15 * (1 - zoomAlpha));
-      const adaptivePositionSmoothing = useSmoothedForCamera ? 
-        baseAdaptiveSmoothing * 0.7 : // Even smoother when following smoothed route
-        baseAdaptiveSmoothing;
+      const adaptivePositionSmoothing = positionSmoothing + (0.15 * (1 - zoomAlpha));
       
       // Simple exponential smoothing for position - frame rate independent
       const frameRateAdjustment = Math.min(1, deltaTime * 60); // Normalize to 60fps
@@ -866,8 +782,6 @@
       // Calculate zoom factor (0 = zoomed in, 1 = zoomed out)
       const zoomFactor = Math.max(0, Math.min(1, zoomOutAmount / 100));
       
-      // Use smoothed route for camera when significantly zoomed out
-      const useSmoothedForCamera = zoomFactor > 0.5;
       
       // Get segment for RIDER position - always use raw route for rider
       // This ensures the rider always stays on the actual route
@@ -912,23 +826,13 @@
       // Get camera targeting points - use smoothed route when zoomed out for smooth camera movement
       let cameraCoords, cameraSegment, cameraBeforePoint, cameraAfterPoint, nextCameraPoint;
       
-      if (useSmoothedForCamera && smoothedRouteCoordinates.length > 0) {
-        // Use smoothed route for camera targeting when zoomed out
-        cameraSegment = calculateSegmentForDistance(currentDistanceKm, true);
-        cameraCoords = smoothedRouteCoordinates;
-        cameraBeforePoint = cameraCoords[cameraSegment.beforeIdx];
-        cameraAfterPoint = cameraCoords[cameraSegment.afterIdx];
-        const lookAheadIdx = Math.min(cameraSegment.afterIdx + 1, cameraCoords.length - 1);
-        nextCameraPoint = cameraCoords[lookAheadIdx];
-      } else {
-        // Use actual route for camera targeting when zoomed in
-        cameraSegment = riderSegment;
-        cameraCoords = routeCoordinates;
-        cameraBeforePoint = riderBeforePoint;
-        cameraAfterPoint = riderAfterPoint;
-        const lookAheadIdx = Math.min(riderAfterIdx + 1, routeCoordinates.length - 1);
-        nextCameraPoint = routeCoordinates[lookAheadIdx];
-      }
+      // Use regular route for camera targeting
+      cameraSegment = riderSegment;
+      cameraCoords = routeCoordinates;
+      cameraBeforePoint = riderBeforePoint;
+      cameraAfterPoint = riderAfterPoint;
+      const lookAheadIdx = Math.min(riderAfterIdx + 1, routeCoordinates.length - 1);
+      nextCameraPoint = routeCoordinates[lookAheadIdx];
       
       // FORWARD-LOOKING CAMERA: Look ahead on route, not back at biker
       
@@ -1010,14 +914,6 @@
         let dz = (nextCameraPoint.length > 2 && cameraAfterPoint.length > 2) ? 
                   (nextCameraPoint[2] - cameraAfterPoint[2]) : 0;
         
-        // Apply additional real-time smoothing when zoomed out for ultra-smooth movement
-        if (useSmoothedForCamera && zoomFactor > 0.7) {
-          // Very heavy smoothing for velocity when significantly zoomed out
-          const smoothingFactor = 0.3 * zoomFactor; // More smoothing = smaller changes
-          dx *= smoothingFactor;
-          dy *= smoothingFactor;
-          dz *= smoothingFactor;
-        }
         
         // Scale velocity by animation speed, but keep it reasonable
         const scaleFactor = Math.min(5.0, animationSpeed) * 0.0005;
@@ -1039,7 +935,7 @@
         framingController(bikerScreenPos);
         
         // 4. CAMERA SOLVER
-        const newCameraState = updateCameraPhysics(targetPoint, zoomGoal, deltaTime, useSmoothedForCamera, bearing);
+        const newCameraState = updateCameraPhysics(targetPoint, zoomGoal, deltaTime, bearing);
         
         // Apply the new camera state with smooth transitions
         map.easeTo({
@@ -1060,23 +956,9 @@
     
     // Update progress and UI
     function updateProgress() {
-      if (routeCoordinates.length === 0 || routeDistances.length === 0) return;
+      if (routeCoordinates.length === 0 || routeDistances.length === 0 || totalDistanceMeters === 0) return;
       
-      // IMPORTANT: Use the same route selection logic as position calculation
-      const heightControl = document.getElementById('camera-height');
-      const zoomOutAmount = heightControl ? parseInt(heightControl.value) : 50;
-      const shouldUseSmoothedRoute = zoomOutAmount > 50;
-      
-      // Use the same route that calculateSegmentForDistance uses
-      const distances = shouldUseSmoothedRoute ? smoothedRouteDistances : routeDistances;
-      const totalDistanceMeters = distances[distances.length - 1] * 1000; // km to m
       const progress = currentRouteDistance / totalDistanceMeters;
-      
-      // Debug progress calculation occasionally
-      if (Math.random() < 0.01) { // Log occasionally
-        console.log(`Progress calc: currentRouteDistance=${currentRouteDistance}m, totalDistanceMeters=${totalDistanceMeters}m, progress=${(progress*100).toFixed(1)}%`);
-        console.log(`Using ${shouldUseSmoothedRoute ? 'smoothed' : 'regular'} route: ${distances.length} points, ${distances[distances.length - 1].toFixed(1)}km total`);
-      }
       
       // Update progress element
       const progressEl = document.getElementById('progress');
@@ -1118,17 +1000,16 @@
       currentElevationEl.textContent = `${Math.round(currentElevation)} m`;
       
       // Calculate gradient using about 100m look-behind distance
-      // IMPORTANT: Use the same route selection as already determined above
-      const coordinates = shouldUseSmoothedRoute ? smoothedRouteCoordinates : routeCoordinates;
+      const coordinates = routeCoordinates;
       
       // Find a point ~100m back from our current position
       let lookBehindDistance = Math.max(0, currentRouteDistance - 100); // meters
       let lookBehindDistanceKm = lookBehindDistance / 1000;
       let prevPointIdx = 0;
       
-      // Find the closest point for our look-behind distance using the correct route
-      for (let i = 0; i < distances.length; i++) {
-        if (distances[i] >= lookBehindDistanceKm) {
+      // Find the closest point for our look-behind distance
+      for (let i = 0; i < routeDistances.length; i++) {
+        if (routeDistances[i] >= lookBehindDistanceKm) {
           prevPointIdx = Math.max(0, i - 1);
           break;
         }
@@ -1138,8 +1019,8 @@
       const prevElevation = coordinates[prevPointIdx][2] || 0;
       const elevationChange = currentElevation - prevElevation;
       
-      // Calculate the actual distance between these points using the correct distances
-      const actualDistance = (currentRouteDistance - (distances[prevPointIdx] * 1000)); // in meters
+      // Calculate the actual distance between these points
+      const actualDistance = (currentRouteDistance - (routeDistances[prevPointIdx] * 1000)); // in meters
       
       // Debug gradient calculation occasionally
       if (Math.random() < 0.02) { // Log occasionally
@@ -1433,22 +1314,6 @@
           }
         }
         
-        // Calculate smoothed route coordinates for camera
-        smoothedRouteCoordinates = createSmoothedRoute(routeCoordinates);
-        
-        // Calculate distances for smoothed route
-        if (smoothedRouteCoordinates.length > 0) {
-          let smoothedDistance = 0;
-          smoothedRouteDistances = [0]; // First point has distance 0
-          
-          for (let i = 1; i < smoothedRouteCoordinates.length; i++) {
-            const prevPoint = [smoothedRouteCoordinates[i-1][0], smoothedRouteCoordinates[i-1][1]];
-            const currentPoint = [smoothedRouteCoordinates[i][0], smoothedRouteCoordinates[i][1]];
-            const segmentDistance = turf.distance(turf.point(prevPoint), turf.point(currentPoint));
-            smoothedDistance += segmentDistance;
-            smoothedRouteDistances.push(smoothedDistance);
-          }
-        }
         
         // Initialize map and camera
         if (routeCoordinates.length > 0) {
@@ -1770,18 +1635,9 @@
         return;
       }
       
-      // IMPORTANT: Use the same route selection logic as calculateSegmentForDistance
-      // Check zoom level to determine which route to use
-      const heightControl = document.getElementById('camera-height');
-      const zoomOutAmount = heightControl ? parseInt(heightControl.value) : 50;
-      const shouldUseSmoothedRoute = zoomOutAmount > 50;
-      
-      // Use the same route that calculateSegmentForDistance will use
-      const distances = shouldUseSmoothedRoute ? smoothedRouteDistances : routeDistances;
-      const totalDistanceMeters = distances[distances.length - 1] * 1000; // km to m
+      // Use regular route distances
+      const totalDistanceMeters = routeDistances[routeDistances.length - 1] * 1000; // km to m
       currentRouteDistance = positionPercent * totalDistanceMeters;
-      
-      console.log(`Manual position: ${positionPercent.toFixed(2)} × ${(totalDistanceMeters/1000).toFixed(1)}km = ${(currentRouteDistance/1000).toFixed(1)}km (using ${shouldUseSmoothedRoute ? 'smoothed' : 'regular'} route)`);
       
       // Convert current distance to km for comparison with routeDistances
       const currentDistanceKm = currentRouteDistance / 1000;
@@ -1947,9 +1803,7 @@
       function resetAllStateVariables() {
         // Reset route data
         routeCoordinates = [];
-        smoothedRouteCoordinates = [];
         routeDistances = [];
-        smoothedRouteDistances = [];
         
         // Reset position tracking
         currentPoint = 0;
@@ -1995,19 +1849,13 @@
         // Get current rider position
         if (routeCoordinates.length === 0) return;
         
-        // Calculate current rider position using the same logic as the animation
-        const heightControl = document.getElementById('camera-height');
-        const zoomOutAmount = heightControl ? parseInt(heightControl.value) : 50;
-        const shouldUseSmoothedRoute = zoomOutAmount > 50;
-        const distances = shouldUseSmoothedRoute ? smoothedRouteDistances : routeDistances;
-        const coordinates = shouldUseSmoothedRoute ? smoothedRouteCoordinates : routeCoordinates;
-        
+        // Calculate current rider position
         const currentDistanceKm = currentRouteDistance / 1000;
-        const segment = calculateSegmentForDistance(currentDistanceKm, false);
+        const segment = calculateSegmentForDistance(currentDistanceKm);
         
-        if (segment && coordinates[segment.afterIdx]) {
-          const beforePoint = coordinates[segment.beforeIdx];
-          const afterPoint = coordinates[segment.afterIdx];
+        if (segment && routeCoordinates[segment.afterIdx]) {
+          const beforePoint = routeCoordinates[segment.beforeIdx];
+          const afterPoint = routeCoordinates[segment.afterIdx];
           const fraction = segment.fraction;
           
           // Interpolate current rider position
