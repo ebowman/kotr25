@@ -625,7 +625,7 @@
       // Use altitude-based look-ahead like the bearing calculation
       const currentDistanceKm = currentRouteDistance / 1000;
       const altitudeFactor = Math.max(0.1, Math.min(1.0, (cameraFOV - baseZoom) / (zoomMax - baseZoom)));
-      const lookAheadDistance = currentDistanceKm + (0.1 + altitudeFactor * 0.8); // 0.1-0.9km based on altitude
+      const lookAheadDistance = currentDistanceKm + (0.05 + altitudeFactor * 0.3); // 0.05-0.35km based on altitude
       
       const clampedLookAheadDistance = Math.min(lookAheadDistance, routeDistances[routeDistances.length - 1]);
       
@@ -650,15 +650,27 @@
         const distanceToBiker = Math.sqrt(cameraToBikerX * cameraToBikerX + cameraToBikerY * cameraToBikerY);
         
         if (distanceToBiker > 0.0001) { // Avoid division by zero
-          // Calculate desired camera distance based on zoom level
-          const desiredDistance = currentZoomFactor > 0.5 ? 
-            0.0008 + currentZoomFactor * 0.002 : // Further back when zoomed out
-            0.0003 + currentZoomFactor * 0.0005; // Closer when zoomed in
+          // STRONGER BIKER CENTERING: Calculate viewport constraints
+          // Ensure biker stays within central 70% of viewport
+          const maxOffsetFromCenter = 0.35; // 35% of viewport radius
+          const viewportRadius = currentZoomFactor > 0.5 ? 
+            0.001 + currentZoomFactor * 0.003 : // Larger viewport when zoomed out
+            0.0005 + currentZoomFactor * 0.001; // Smaller when zoomed in
           
-          // Adjust camera position to maintain desired distance from biker
-          const scaleFactor = desiredDistance / distanceToBiker;
-          targetX = bikerPos.x - (cameraToBikerX * scaleFactor);
-          targetY = bikerPos.y - (cameraToBikerY * scaleFactor);
+          const maxAllowedDistance = viewportRadius * maxOffsetFromCenter;
+          
+          if (distanceToBiker > maxAllowedDistance) {
+            // FORCE camera closer to keep biker in safe zone
+            const correctionFactor = maxAllowedDistance / distanceToBiker;
+            targetX = bikerPos.x - (cameraToBikerX * correctionFactor);
+            targetY = bikerPos.y - (cameraToBikerY * correctionFactor);
+          } else {
+            // Normal positioning with gentler adjustment
+            const desiredDistance = viewportRadius * 0.2; // Keep biker 20% from center
+            const scaleFactor = Math.min(1.0, desiredDistance / distanceToBiker);
+            targetX = bikerPos.x - (cameraToBikerX * scaleFactor);
+            targetY = bikerPos.y - (cameraToBikerY * scaleFactor);
+          }
         }
         
         return { x: targetX, y: targetY, z: targetZ };
@@ -889,7 +901,7 @@
       // Calculate where biker will be further ahead on the route
       // Look-ahead distance based on camera altitude (like real helicopter pilot)
       const altitudeFactor = Math.max(0.1, Math.min(1.0, (cameraFOV - baseZoom) / (zoomMax - baseZoom)));
-      const forwardLookDistance = currentDistanceKm + (0.2 + altitudeFactor * 4.0); // 0.2-4.2km based on altitude
+      const forwardLookDistance = currentDistanceKm + (0.1 + altitudeFactor * 1.0); // 0.1-1.1km based on altitude
         
       const clampedForwardDistance = Math.min(forwardLookDistance, routeDistances[routeDistances.length - 1]);
       
@@ -911,6 +923,7 @@
         // Calculate bearing toward this forward point (where biker is going)
         targetBearing = calculateBearing([cameraPos.x, cameraPos.y], [forwardX, forwardY]);
       }
+      
       
       if (zoomFactor > 0.5) {
         // ZOOMED OUT: Camera has strong inertia and barely responds
@@ -946,6 +959,7 @@
         y: interpolatedPoint[1],
         z: interpolatedPoint[2]
       };
+      
       
       // Calculate velocity using camera targeting points for smooth movement
       let bikerVel;
