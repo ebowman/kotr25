@@ -1117,25 +1117,36 @@
       currentElevationEl.textContent = `${Math.round(currentElevation)} m`;
       
       // Calculate gradient using about 100m look-behind distance
+      // IMPORTANT: Use the same route selection as already determined above
+      const coordinates = shouldUseSmoothedRoute ? smoothedRouteCoordinates : routeCoordinates;
+      
       // Find a point ~100m back from our current position
       let lookBehindDistance = Math.max(0, currentRouteDistance - 100); // meters
       let lookBehindDistanceKm = lookBehindDistance / 1000;
       let prevPointIdx = 0;
       
-      // Find the closest point for our look-behind distance
-      for (let i = 0; i < routeDistances.length; i++) {
-        if (routeDistances[i] >= lookBehindDistanceKm) {
+      // Find the closest point for our look-behind distance using the correct route
+      for (let i = 0; i < distances.length; i++) {
+        if (distances[i] >= lookBehindDistanceKm) {
           prevPointIdx = Math.max(0, i - 1);
           break;
         }
       }
       
-      // Calculate the elevation change over this distance
-      const prevElevation = routeCoordinates[prevPointIdx][2] || 0;
+      // Calculate the elevation change over this distance using the correct coordinates
+      const prevElevation = coordinates[prevPointIdx][2] || 0;
       const elevationChange = currentElevation - prevElevation;
       
-      // Calculate the actual distance between these points
-      const actualDistance = (currentRouteDistance - (routeDistances[prevPointIdx] * 1000)); // in meters
+      // Calculate the actual distance between these points using the correct distances
+      const actualDistance = (currentRouteDistance - (distances[prevPointIdx] * 1000)); // in meters
+      
+      // Debug gradient calculation occasionally
+      if (Math.random() < 0.02) { // Log occasionally
+        console.log(`Gradient calc: currentElevation=${currentElevation.toFixed(1)}m, prevElevation=${prevElevation.toFixed(1)}m`);
+        console.log(`ElevationChange=${elevationChange.toFixed(1)}m, actualDistance=${actualDistance.toFixed(1)}m`);
+        console.log(`CurrentRouteDistance=${currentRouteDistance.toFixed(1)}m, prevPointDistance=${(routeDistances[prevPointIdx] * 1000).toFixed(1)}m`);
+        console.log(`PrevPointIdx=${prevPointIdx}, lookBehindDistanceKm=${lookBehindDistanceKm.toFixed(2)}km`);
+      }
       
       const currentGradientEl = document.getElementById('current-gradient');
       if (actualDistance > 10) { // Only calculate gradient if we have sufficient distance
