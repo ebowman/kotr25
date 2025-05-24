@@ -2059,22 +2059,17 @@
         console.error('Follow path toggle element not found');
       }
       
-      // Position control via overlay click - bypasses slider event issues
+      // Position control via overlay - supports both click and drag
       const positionOverlay = document.getElementById('position-overlay');
+      let isDragging = false;
       
-      positionOverlay.addEventListener('click', (e) => {
-        console.log('Position overlay clicked');
-        
-        // Calculate position based on click location
+      // Function to update position based on mouse/touch coordinates
+      function updatePositionFromEvent(e) {
         const rect = positionOverlay.getBoundingClientRect();
-        const clickX = e.clientX - rect.left;
+        const clientX = e.clientX || (e.touches && e.touches[0] ? e.touches[0].clientX : 0);
+        const clickX = clientX - rect.left;
         const width = rect.width;
         const positionPercent = Math.max(0, Math.min(1, clickX / width));
-        
-        console.log('Calculated position:', positionPercent, 'from click at', clickX, 'width', width);
-        
-        // Temporarily disable automatic updates
-        userAdjustingPosition = true;
         
         // Update slider value
         positionSlider.value = positionPercent * 100;
@@ -2086,20 +2081,69 @@
           
           // Clamp to valid range
           currentRouteDistance = Math.max(0, Math.min(currentRouteDistance, totalDistanceMeters));
-          
-          console.log('Updated currentRouteDistance to:', currentRouteDistance, 'meters');
-          console.log('Total route distance:', totalDistanceMeters, 'meters (', routeDistances[routeDistances.length - 1], 'km)');
-          console.log('Position percent:', positionPercent, '= distance', (currentRouteDistance/1000).toFixed(1), 'km');
         } else {
           // Animation is stopped - use the existing manual positioning function
           updatePositionManually(positionPercent);
         }
-        
-        // Re-enable automatic updates after a delay
-        setTimeout(() => {
-          userAdjustingPosition = false;
-          console.log('Re-enabled automatic updates');
-        }, 500);
+      }
+      
+      // Mouse events for dragging
+      positionOverlay.addEventListener('mousedown', (e) => {
+        isDragging = true;
+        userAdjustingPosition = true;
+        updatePositionFromEvent(e);
+        e.preventDefault();
+      });
+      
+      document.addEventListener('mousemove', (e) => {
+        if (isDragging) {
+          updatePositionFromEvent(e);
+          e.preventDefault();
+        }
+      });
+      
+      document.addEventListener('mouseup', (e) => {
+        if (isDragging) {
+          isDragging = false;
+          setTimeout(() => {
+            userAdjustingPosition = false;
+          }, 100);
+        }
+      });
+      
+      // Touch events for mobile dragging
+      positionOverlay.addEventListener('touchstart', (e) => {
+        isDragging = true;
+        userAdjustingPosition = true;
+        updatePositionFromEvent(e);
+        e.preventDefault();
+      });
+      
+      document.addEventListener('touchmove', (e) => {
+        if (isDragging) {
+          updatePositionFromEvent(e);
+          e.preventDefault();
+        }
+      });
+      
+      document.addEventListener('touchend', (e) => {
+        if (isDragging) {
+          isDragging = false;
+          setTimeout(() => {
+            userAdjustingPosition = false;
+          }, 100);
+        }
+      });
+      
+      // Keep the click handler for single clicks
+      positionOverlay.addEventListener('click', (e) => {
+        if (!isDragging) { // Only handle click if we weren't dragging
+          userAdjustingPosition = true;
+          updatePositionFromEvent(e);
+          setTimeout(() => {
+            userAdjustingPosition = false;
+          }, 100);
+        }
       });
     });
     
