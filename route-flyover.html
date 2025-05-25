@@ -453,8 +453,7 @@
         return { 
           beforeIdx: 0, 
           afterIdx: 1, 
-          fraction: 0,
-          useSmoothedRoute: shouldUseSmoothedRoute 
+          fraction: 0
         };
       }
       
@@ -462,8 +461,7 @@
         return { 
           beforeIdx: distances.length - 2,
           afterIdx: distances.length - 1,
-          fraction: 1,
-          useSmoothedRoute: shouldUseSmoothedRoute
+          fraction: 1
         };
       }
       
@@ -1345,7 +1343,11 @@
     function updateProgress() {
       if (routeCoordinates.length === 0 || routeDistances.length === 0 || totalDistanceMeters === 0) return;
       
-      const progress = currentRouteDistance / totalDistanceMeters;
+      // Use the same segment-based calculation as the map position for consistency
+      const currentDistanceKm = currentRouteDistance / 1000;
+      const riderSegment = calculateSegmentForDistance(currentDistanceKm);
+      const segmentProgress = riderSegment.beforeIdx + riderSegment.fraction;
+      const progress = segmentProgress / (routeCoordinates.length - 1);
       
       // Update progress element
       const progressEl = document.getElementById('progress');
@@ -1704,8 +1706,8 @@
         
         // Initialize map and camera
         if (routeCoordinates.length > 0) {
-          // Save total distance for progress calculations
-          totalDistanceMeters = totalDistance * 1000; // km to meters
+          // Save total distance for progress calculations - use routeDistances for consistency
+          totalDistanceMeters = routeDistances[routeDistances.length - 1] * 1000; // km to meters
           
           // Reset camera physics state
           cameraVel = { x: 0, y: 0, z: 0 };
@@ -2037,8 +2039,7 @@
         return;
       }
       
-      // Use regular route distances
-      const totalDistanceMeters = routeDistances[routeDistances.length - 1] * 1000; // km to m
+      // Use regular route distances - use global totalDistanceMeters for consistency
       currentRouteDistance = positionPercent * totalDistanceMeters;
       
       // Convert current distance to km for comparison with routeDistances
@@ -2364,7 +2365,6 @@
         
         if (animationId) {
           // Animation is running - update the current position directly
-          const totalDistanceMeters = routeDistances[routeDistances.length - 1] * 1000; // km to m
           currentRouteDistance = positionPercent * totalDistanceMeters;
           
           // Clamp to valid range
