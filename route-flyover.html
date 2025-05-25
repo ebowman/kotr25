@@ -376,6 +376,8 @@
     let cameraVelocity = { bearing: 0, speed: 0 }; // Camera movement velocity for momentum
     let currentWaypoint = null; // Current target waypoint camera is flying toward
     let waypointUpdateTimer = 0; // Timer to update waypoint occasionally
+    let isAnimationRunning = false; // Track animation state more reliably
+    let animationToken = null; // Unique token to identify the current animation instance
     
     // Simplified camera parameters for smooth motion
     let lookAheadFactor = 0.05;  // Much less aggressive look-ahead
@@ -387,6 +389,18 @@
     
     // Smoothing parameters
     let positionSmoothing = 0.08;  // Base position smoothing factor
+    
+    // Obscuration detection state
+    let obscurationCounter = 0; // Count consecutive obscured frames
+    let lastObscuredState = false; // Track previous obscuration state
+    
+    // Debug: Track camera updates per frame
+    let frameCount = 0;
+    let cameraUpdatesThisFrame = 0;
+    
+    // ANTI-JITTER: Only allow one camera update per timeout cycle
+    let pendingCameraUpdate = null;
+    let lastCameraUpdateTime = 0;
     let zoomSmoothing = 0.12;      // Zoom smoothing factor
     let bearingSmoothing = 0.15;   // Bearing smoothing factor for camera direction
     
@@ -486,10 +500,10 @@
       // Ensure fraction is always valid (0-1)
       fraction = Math.max(0, Math.min(1, fraction));
       
-      // Debug interpolation occasionally
-      if (Math.random() < 0.005) { // Log very occasionally
-        console.log(`Segment ${beforeIdx}-${afterIdx}: length=${(segmentLength*1000).toFixed(1)}m, fraction=${fraction.toFixed(3)}`);
-      }
+      // Debug interpolation occasionally - DISABLED
+      // if (Math.random() < 0.005) { // Log very occasionally
+      //   console.log(`Segment ${beforeIdx}-${afterIdx}: length=${(segmentLength*1000).toFixed(1)}m, fraction=${fraction.toFixed(3)}`);
+      // }
       
       return { 
         beforeIdx, 
@@ -553,15 +567,259 @@
       }
     }
     
+    // SIMPLE HEIGHT: Just use zoom-based height without terrain detection
+    function shouldUseHighCamera(zoomFactor) {
+      // Use higher camera when significantly zoomed out
+      return zoomFactor > 0.7;
+    }
+    
+    // ANTI-JITTER: Guarantee only one camera update per timeout cycle
+    function safeCameraUpdate(cameraState, source) {
+      const currentTime = performance.now();
+      
+      // For MAIN_ANIMATION with requestAnimationFrame, allow all updates
+      // Only throttle non-animation sources to prevent interference
+      if (source !== "MAIN_ANIMATION" && currentTime - lastCameraUpdateTime < 15) {
+        // Already updated camera recently - store as pending
+        console.log(`Blocking camera update from ${source} - too soon after last update`);
+        pendingCameraUpdate = { ...cameraState, source };
+        return;
+      }
+      
+      // Safe to update
+      lastCameraUpdateTime = currentTime;
+      // Disable frame-by-frame logging during animation for performance
+      // console.log(`Camera update from ${source} at time ${currentTime.toFixed(1)}`);
+      
+      // During main animation, use jumpTo for instant, direct updates without any interpolation
+      if (source === "MAIN_ANIMATION") {
+        map.jumpTo({
+          center: cameraState.center,
+          zoom: cameraState.zoom,
+          bearing: cameraState.bearing,
+          pitch: cameraState.pitch
+        });
+      } else {
+        // Normal easeTo for non-animation interactions
+        map.easeTo({
+          ...cameraState,
+          duration: cameraState.duration || 0,
+          easing: cameraState.easing || (t => t)
+        });
+      }
+    }
+    
+    // SIMPLE CAMERA HEIGHT DECISION: Use zoom level only
+    function shouldUseHighCamera(zoomFactor) {
+      return zoomFactor > 0.7;
+    }
+    
+    // CONSTRAINT STATE: Track to prevent rapid on/off switching
+    let riderVisibilityActive = false;
+    
+    // CAMERA PATH DERIVATIVES: Track velocity and acceleration for jitter detection
+    let cameraHistory = []; // Store recent camera positions
+    const maxHistoryLength = 10; // Keep last 10 positions for derivative calculation
+    
+    // ROUTE HAZARD DETECTION: Pre-analyze route for problematic sections
+    let routeHazardMap = []; // Array marking problematic sections of the route
+    
+    function analyzeRouteForHazards() {
+      console.log("Analyzing route for camera hazards...");
+      routeHazardMap = [];
+      
+      if (routeCoordinates.length < 10) return;
+      
+      for (let i = 0; i < routeCoordinates.length; i++) {
+        let hazardScore = 0;
+        let hazardReasons = [];
+        
+        // Check for steep elevation changes
+        if (i > 0 && i < routeCoordinates.length - 1) {
+          const prevElevation = routeCoordinates[i-1][2] || 0;
+          const currentElevation = routeCoordinates[i][2] || 0;
+          const nextElevation = routeCoordinates[i+1][2] || 0;
+          
+          const elevationChange1 = Math.abs(currentElevation - prevElevation);
+          const elevationChange2 = Math.abs(nextElevation - currentElevation);
+          
+          if (elevationChange1 > 20 || elevationChange2 > 20) {
+            hazardScore += 2;
+            hazardReasons.push("steep-elevation");
+          }
+        }
+        
+        // Check for sharp direction changes (tight turns)
+        if (i > 1 && i < routeCoordinates.length - 2) {
+          const p1 = routeCoordinates[i-2];
+          const p2 = routeCoordinates[i-1];
+          const p3 = routeCoordinates[i];
+          const p4 = routeCoordinates[i+1];
+          
+          // Calculate bearing changes
+          const bearing1 = Math.atan2(p2[1] - p1[1], p2[0] - p1[0]);
+          const bearing2 = Math.atan2(p3[1] - p2[1], p3[0] - p2[0]);
+          const bearing3 = Math.atan2(p4[1] - p3[1], p4[0] - p3[0]);
+          
+          let bearingChange1 = Math.abs(bearing2 - bearing1);
+          let bearingChange2 = Math.abs(bearing3 - bearing2);
+          
+          // Handle angle wraparound
+          if (bearingChange1 > Math.PI) bearingChange1 = 2 * Math.PI - bearingChange1;
+          if (bearingChange2 > Math.PI) bearingChange2 = 2 * Math.PI - bearingChange2;
+          
+          if (bearingChange1 > 0.3 || bearingChange2 > 0.3) { // ~17 degrees
+            hazardScore += 1;
+            hazardReasons.push("sharp-turn");
+          }
+        }
+        
+        // Check for rapid elevation + direction changes (worst case)
+        if (hazardReasons.includes("steep-elevation") && hazardReasons.includes("sharp-turn")) {
+          hazardScore += 3; // Extra penalty for combination
+          hazardReasons.push("compound-hazard");
+        }
+        
+        routeHazardMap[i] = {
+          score: hazardScore,
+          reasons: hazardReasons,
+          isHazardous: hazardScore >= 3
+        };
+      }
+      
+      const hazardCount = routeHazardMap.filter(h => h.isHazardous).length;
+      console.log(`Found ${hazardCount} hazardous sections out of ${routeCoordinates.length} points`);
+    }
+    
+    function applyDerivativeBasedSmoothing(proposedPosition, deltaTime) {
+      // Add current camera position to history
+      const currentTime = performance.now();
+      cameraHistory.push({
+        position: { x: cameraPos.x, y: cameraPos.y, z: cameraPos.z },
+        time: currentTime
+      });
+      
+      // Trim history to max length
+      if (cameraHistory.length > maxHistoryLength) {
+        cameraHistory.shift();
+      }
+      
+      // Need at least 3 points to calculate acceleration
+      if (cameraHistory.length < 3) {
+        return proposedPosition; // Not enough history, use proposed position
+      }
+      
+      // Calculate velocity (first derivative) for recent positions
+      const velocities = [];
+      for (let i = 1; i < cameraHistory.length; i++) {
+        const dt = (cameraHistory[i].time - cameraHistory[i-1].time) / 1000; // Convert to seconds
+        if (dt > 0) {
+          const dx = cameraHistory[i].position.x - cameraHistory[i-1].position.x;
+          const dy = cameraHistory[i].position.y - cameraHistory[i-1].position.y;
+          velocities.push({
+            vx: dx / dt,
+            vy: dy / dt,
+            time: cameraHistory[i].time
+          });
+        }
+      }
+      
+      // Calculate acceleration (second derivative) for recent velocities
+      const accelerations = [];
+      for (let i = 1; i < velocities.length; i++) {
+        const dt = (velocities[i].time - velocities[i-1].time) / 1000;
+        if (dt > 0) {
+          const ax = (velocities[i].vx - velocities[i-1].vx) / dt;
+          const ay = (velocities[i].vy - velocities[i-1].vy) / dt;
+          accelerations.push({
+            ax: ax,
+            ay: ay,
+            magnitude: Math.sqrt(ax*ax + ay*ay)
+          });
+        }
+      }
+      
+      // Skip derivative analysis during main animation to prevent interference
+      if (isAnimationRunning) {
+        return proposedPosition; // Use proposed position directly during animation
+      }
+      
+      // Analyze derivatives for jitter patterns (only when not animating)
+      if (accelerations.length >= 2) {
+        // Calculate average acceleration magnitude (indicator of jittering)
+        const avgAcceleration = accelerations.reduce((sum, a) => sum + a.magnitude, 0) / accelerations.length;
+        
+        // Calculate velocity direction changes (oscillation detection)
+        let directionChanges = 0;
+        for (let i = 1; i < velocities.length; i++) {
+          const dot = velocities[i].vx * velocities[i-1].vx + velocities[i].vy * velocities[i-1].vy;
+          if (dot < 0) directionChanges++; // Direction reversal
+        }
+        
+        // Determine jitter severity and apply appropriate smoothing
+        const highAccelerationThreshold = 0.01; // High acceleration indicates jitter
+        const oscillationThreshold = 2; // Multiple direction changes indicate oscillation
+        
+        let smoothingStrength = 0.1; // Base smoothing
+        let jitterReason = "";
+        
+        if (avgAcceleration > highAccelerationThreshold) {
+          smoothingStrength = 0.7; // Strong smoothing for high acceleration
+          jitterReason = `high acceleration (${(avgAcceleration * 111000).toFixed(1)}m/s²)`;
+        } else if (directionChanges >= oscillationThreshold) {
+          smoothingStrength = 0.6; // Strong smoothing for oscillation
+          jitterReason = `oscillation (${directionChanges} direction changes)`;
+        } else if (avgAcceleration > highAccelerationThreshold * 0.5) {
+          smoothingStrength = 0.3; // Moderate smoothing for moderate acceleration
+          jitterReason = `moderate acceleration (${(avgAcceleration * 111000).toFixed(1)}m/s²)`;
+        }
+        
+        // Disable console logging during animation for performance
+        // if (jitterReason && Math.random() < 0.1) {
+        //   console.log(`Derivative jitter detection: ${jitterReason} - applying ${(smoothingStrength*100).toFixed(0)}% smoothing`);
+        // }
+        
+        // Apply derivative-constrained smoothing
+        return {
+          x: cameraPos.x + (proposedPosition.x - cameraPos.x) * (1 - smoothingStrength),
+          y: cameraPos.y + (proposedPosition.y - cameraPos.y) * (1 - smoothingStrength),
+          z: proposedPosition.z
+        };
+      }
+      
+      // Fallback to minimal smoothing
+      return {
+        x: cameraPos.x + (proposedPosition.x - cameraPos.x) * 0.9,
+        y: cameraPos.y + (proposedPosition.y - cameraPos.y) * 0.9,
+        z: proposedPosition.z
+      };
+    }
+    
+    // SIMPLE HEIGHT CALCULATION: Use zoom level only, no complex terrain sampling
+    function calculateSimpleHeight(zoomFactor, useHighCamera = false) {
+      // Simple, predictable height based purely on zoom level
+      // No terrain sampling to avoid oscillation
+      const minHeight = 100;  // 100m when zoomed in
+      const maxHeight = 800;  // 800m when zoomed out
+      
+      const baseHeight = minHeight + (zoomFactor * (maxHeight - minHeight));
+      
+      // If high camera mode, boost camera height significantly
+      const heightBoost = useHighCamera ? 400 : 0; // Extra 400m when needed
+      
+      return baseHeight + heightBoost;
+    }
+    
+    
     // TARGET-POINT MODULE: Calculate where camera position should be
-    function calculateTargetPoint(bikerPos, bikerVel) {
+    function calculateTargetPoint(bikerPos, bikerVel, deltaTime = 0.016) {
       // Safety checks for NaN values
       if (isNaN(bikerPos.x) || isNaN(bikerPos.y) || isNaN(bikerPos.z)) {
         console.warn('NaN values detected in biker position');
         return {
           x: bikerPos.x || 0,
           y: bikerPos.y || 0,
-          z: (bikerPos.z || 0) + verticalOffset
+          z: (bikerPos.z || 0) + 100 // Safe default height
         };
       }
       
@@ -571,10 +829,10 @@
       const currentZoomFactor = Math.max(0, Math.min(1, zoomOutAmount / 100));
       
       // Calculate how far ahead on the route to position the camera
-      // Use altitude-based look-ahead like the bearing calculation
+      // Use much shorter look-ahead to prevent geometric conflicts on tight turns
       const currentDistanceKm = currentRouteDistance / 1000;
       const altitudeFactor = Math.max(0.1, Math.min(1.0, (cameraFOV - baseZoom) / (zoomMax - baseZoom)));
-      const lookAheadDistance = currentDistanceKm + (0.05 + altitudeFactor * 0.3); // 0.05-0.35km based on altitude
+      const lookAheadDistance = currentDistanceKm + (0.01 + altitudeFactor * 0.05); // Reduced to 0.01-0.06km for stability
       
       const clampedLookAheadDistance = Math.min(lookAheadDistance, routeDistances[routeDistances.length - 1]);
       
@@ -587,49 +845,151 @@
         const afterPoint = lookAheadCoords[lookAheadSegment.afterIdx];
         const fraction = lookAheadSegment.fraction;
         
-        // Interpolate the look-ahead point on the route
-        let targetX = beforePoint[0] + (afterPoint[0] - beforePoint[0]) * fraction;
-        let targetY = beforePoint[1] + (afterPoint[1] - beforePoint[1]) * fraction;
-        const targetZ = (beforePoint[2] || 0) + ((afterPoint[2] || 0) - (beforePoint[2] || 0)) * fraction + verticalOffset;
+        // UNIFIED CONSTRAINT RESOLUTION: Calculate all possible positions first, then choose
         
-        // CRITICAL: Adjust camera position to keep biker centered in viewport
-        // Calculate direction from camera to biker
-        const cameraToBikerX = bikerPos.x - targetX;
-        const cameraToBikerY = bikerPos.y - targetY;
+        // 1. BASE POSITION: Interpolate the look-ahead point on the route
+        const baseX = beforePoint[0] + (afterPoint[0] - beforePoint[0]) * fraction;
+        const baseY = beforePoint[1] + (afterPoint[1] - beforePoint[1]) * fraction;
+        const routeElevation = (beforePoint[2] || 0) + ((afterPoint[2] || 0) - (beforePoint[2] || 0)) * fraction;
+        
+        // 2. HEIGHT CALCULATION: Simple and stable - no terrain queries
+        const useHighCamera = shouldUseHighCamera(currentZoomFactor);
+        const cameraHeight = calculateSimpleHeight(currentZoomFactor, useHighCamera);
+        const targetZ = routeElevation + cameraHeight;
+        
+        // 3. CONSTRAINT VOTING SYSTEM: Multiple constraints cast votes, manager mediates
+        const constraints = [];
+        
+        // SIMPLIFIED STABLE CONSTRAINTS: Fixed strengths to prevent oscillation
+        
+        // CONSTRAINT 1: Route Following
+        constraints.push({
+          name: "route-following",
+          position: { x: baseX, y: baseY, z: targetZ },
+          strength: 0.5, // Fixed moderate strength
+          reason: "Follow route path"
+        });
+        
+        // CONSTRAINT 2: Rider Visibility (terrain-aware to prevent impossible constraints)
+        const cameraToBikerX = bikerPos.x - baseX;
+        const cameraToBikerY = bikerPos.y - baseY;
         const distanceToBiker = Math.sqrt(cameraToBikerX * cameraToBikerX + cameraToBikerY * cameraToBikerY);
         
-        if (distanceToBiker > 0.0001) { // Avoid division by zero
-          // STRONGER BIKER CENTERING: Calculate viewport constraints
-          // Ensure biker stays within central 70% of viewport
-          const maxOffsetFromCenter = 0.35; // 35% of viewport radius
-          const viewportRadius = currentZoomFactor > 0.5 ? 
-            0.001 + currentZoomFactor * 0.003 : // Larger viewport when zoomed out
-            0.0005 + currentZoomFactor * 0.001; // Smaller when zoomed in
+        // Check if steep terrain likely obscures the rider
+        const elevationDifference = Math.abs(targetZ - bikerPos.z);
+        const isLikelyObscured = elevationDifference > 100; // 100m+ elevation difference suggests terrain obscuration
+        
+        if (!useHighCamera && !isLikelyObscured) {
+          // Hysteresis: different thresholds for turning on vs off
+          const turnOnThreshold = 0.001;    // Activate when rider gets this far (~100m)
+          const turnOffThreshold = 0.0005;  // Deactivate when rider gets this close (~50m)
           
-          const maxAllowedDistance = viewportRadius * maxOffsetFromCenter;
-          
-          if (distanceToBiker > maxAllowedDistance) {
-            // FORCE camera closer to keep biker in safe zone
-            const correctionFactor = maxAllowedDistance / distanceToBiker;
-            targetX = bikerPos.x - (cameraToBikerX * correctionFactor);
-            targetY = bikerPos.y - (cameraToBikerY * correctionFactor);
-          } else {
-            // Normal positioning with gentler adjustment
-            const desiredDistance = viewportRadius * 0.2; // Keep biker 20% from center
-            const scaleFactor = Math.min(1.0, desiredDistance / distanceToBiker);
-            targetX = bikerPos.x - (cameraToBikerX * scaleFactor);
-            targetY = bikerPos.y - (cameraToBikerY * scaleFactor);
+          if (!riderVisibilityActive && distanceToBiker > turnOnThreshold) {
+            riderVisibilityActive = true;
+          } else if (riderVisibilityActive && distanceToBiker < turnOffThreshold) {
+            riderVisibilityActive = false;
           }
+          
+          if (riderVisibilityActive) {
+            const riderCenteredX = bikerPos.x - (cameraToBikerX * 0.2); // Gentler centering
+            const riderCenteredY = bikerPos.y - (cameraToBikerY * 0.2);
+            
+            constraints.push({
+              name: "rider-visibility",
+              position: { x: riderCenteredX, y: riderCenteredY, z: targetZ },
+              strength: 0.3, // Fixed moderate strength
+              reason: `Keep rider visible`
+            });
+          }
+        } else {
+          // Reset when in high camera mode OR when likely obscured by terrain
+          riderVisibilityActive = false;
+          // Disable console logging during animation for performance
+          // if (isLikelyObscured && Math.random() < 0.1) {
+          //   console.log(`Disabling rider-visibility due to terrain obscuration (elevation diff: ${elevationDifference.toFixed(1)}m)`);
+          // }
         }
         
-        return { x: targetX, y: targetY, z: targetZ };
+        // CONSTRAINT 3: Stability - stronger to prevent jitter
+        constraints.push({
+          name: "stability",
+          position: { x: cameraPos.x, y: cameraPos.y, z: targetZ },
+          strength: 0.4, // Stronger stability influence
+          reason: "Minimize camera movement"
+        });
+        
+        // CONSTRAINT MANAGER: Resolve conflicts with weighted averaging
+        let totalWeight = 0;
+        let weightedX = 0;
+        let weightedY = 0;
+        let maxZ = targetZ;
+        
+        constraints.forEach(constraint => {
+          const weight = constraint.strength;
+          weightedX += constraint.position.x * weight;
+          weightedY += constraint.position.y * weight;
+          maxZ = Math.max(maxZ, constraint.position.z);
+          totalWeight += weight;
+        });
+        
+        const finalPosition = {
+          x: weightedX / totalWeight,
+          y: weightedY / totalWeight,
+          z: maxZ
+        };
+        
+        // Debug logging to understand constraint decisions - DISABLED
+        // if (Math.random() < 0.01) { // Log 1% of frames to avoid spam
+        //   console.log("Constraint votes:", constraints.map(c => 
+        //     `${c.name}: strength=${c.strength.toFixed(2)} (${c.reason})`
+        //   ).join(", "));
+        //   console.log(`Final position: (${(finalPosition.x * 111000).toFixed(1)}, ${(finalPosition.y * 111000).toFixed(1)})m`);
+        // }
+        
+        // CHECK FOR HAZARDOUS ROUTE SECTION
+        const currentRouteIndex = Math.round((currentRouteDistance / routeDistances[routeDistances.length - 1]) * (routeCoordinates.length - 1));
+        const isHazardousSection = routeHazardMap[currentRouteIndex]?.isHazardous || false;
+        
+        if (isHazardousSection) {
+          // HAZARD MODE: Ultra-simplified camera logic
+          const hazardReasons = routeHazardMap[currentRouteIndex]?.reasons || [];
+          if (Math.random() < 0.1) {
+            console.log(`Hazard mode activated: ${hazardReasons.join(', ')} - using simplified camera`);
+          }
+          
+          // Ultra-conservative: just follow route with heavy smoothing, no constraints
+          const ultraSmoothingFactor = 0.8; // 80% smoothing in hazard zones
+          return {
+            x: cameraPos.x + (baseX - cameraPos.x) * (1 - ultraSmoothingFactor),
+            y: cameraPos.y + (baseY - cameraPos.y) * (1 - ultraSmoothingFactor),
+            z: targetZ
+          };
+        }
+        
+        // ANIMATION MODE: Skip constraint system entirely for pure route following
+        if (isAnimationRunning) {
+          return {
+            x: baseX,
+            y: baseY,
+            z: targetZ
+          };
+        }
+        
+        // NORMAL MODE: Derivative-based jitter detection and smoothing
+        return applyDerivativeBasedSmoothing(finalPosition, deltaTime);
       }
       
-      // Fallback to biker position
+      // Fallback to biker position with terrain-aware height
+      const fallbackHeightControl = document.getElementById('camera-height');
+      const fallbackZoomOutAmount = fallbackHeightControl ? parseInt(fallbackHeightControl.value) : 50;
+      const fallbackZoomFactor = Math.max(0, Math.min(1, fallbackZoomOutAmount / 100));
+      
+      const cameraHeight = calculateSimpleHeight(fallbackZoomFactor);
+      
       return {
         x: bikerPos.x,
         y: bikerPos.y,
-        z: bikerPos.z + verticalOffset
+        z: bikerPos.z + cameraHeight
       };
     }
     
@@ -661,16 +1021,32 @@
       const adaptivePositionSmoothing = positionSmoothing + (0.15 * (1 - zoomAlpha));
       
       // Simple exponential smoothing for position - frame rate independent
-      const frameRateAdjustment = Math.min(1, deltaTime * 60); // Normalize to 60fps
-      const actualPositionSmoothing = 1 - Math.pow(1 - adaptivePositionSmoothing, frameRateAdjustment);
-      
-      cameraPos.x += (targetPos.x - cameraPos.x) * actualPositionSmoothing;
-      cameraPos.y += (targetPos.y - cameraPos.y) * actualPositionSmoothing;
-      cameraPos.z += (targetPos.z - cameraPos.z) * actualPositionSmoothing;
+      // Disable position smoothing during animation to prevent interference
+      if (isAnimationRunning) {
+        // Direct position update during animation for crisp movement
+        cameraPos.x = targetPos.x;
+        cameraPos.y = targetPos.y;
+        cameraPos.z = targetPos.z;
+      } else {
+        // Normal smoothing when not animating
+        const frameRateAdjustment = Math.min(1, deltaTime * 60); // Normalize to 60fps
+        const actualPositionSmoothing = 1 - Math.pow(1 - adaptivePositionSmoothing, frameRateAdjustment);
+        
+        cameraPos.x += (targetPos.x - cameraPos.x) * actualPositionSmoothing;
+        cameraPos.y += (targetPos.y - cameraPos.y) * actualPositionSmoothing;
+        cameraPos.z += (targetPos.z - cameraPos.z) * actualPositionSmoothing;
+      }
       
       // Simple exponential smoothing for FOV
-      const actualZoomSmoothing = 1 - Math.pow(1 - zoomSmoothing, frameRateAdjustment);
-      cameraFOV += (desiredFOV - cameraFOV) * actualZoomSmoothing;
+      if (isAnimationRunning) {
+        // Direct FOV update during animation
+        cameraFOV = desiredFOV;
+      } else {
+        // Normal FOV smoothing when not animating
+        const frameRateAdjustment = Math.min(1, deltaTime * 60); // Normalize to 60fps
+        const actualZoomSmoothing = 1 - Math.pow(1 - zoomSmoothing, frameRateAdjustment);
+        cameraFOV += (desiredFOV - cameraFOV) * actualZoomSmoothing;
+      }
       
       // Apply safety limits to FOV
       cameraFOV = Math.max(baseZoom, Math.min(zoomMax, cameraFOV));
@@ -719,13 +1095,22 @@
     
     // Clean, optimized animation function that implements the architecture from CAMERA.md
     // Enhanced to handle dynamic route smoothing based on zoom level
-    function animateRoute(currentTime = performance.now()) {
-      // Calculate deltaTime for frame-rate independent animation
-      let deltaTime = (currentTime - lastFrameTime) / 1000; // Convert to seconds
+    function animateRoute(currentTime = performance.now(), token = animationToken) {
+      // Check if this is the current animation instance
+      if (token !== animationToken || !isAnimationRunning) {
+        return;
+      }
+      
+      // Calculate deltaTime but smooth it to prevent jitter from frame timing variations
+      let rawDeltaTime = (currentTime - lastFrameTime) / 1000; // Convert to seconds
       lastFrameTime = currentTime;
       
-      // Cap deltaTime to prevent large jumps (e.g., when tab was in background)
-      deltaTime = Math.min(deltaTime, 1/30); // Max 33ms frame time for smooth movement
+      // Smooth deltaTime to reduce jitter from frame timing variations
+      // Use exponential moving average to smooth timing inconsistencies
+      const targetFrameTime = 1/60; // Target 60fps
+      const deltaTime = Math.abs(rawDeltaTime - targetFrameTime) < 0.004 ? 
+        targetFrameTime : // Use target if close to 60fps
+        Math.max(0.008, Math.min(0.05, rawDeltaTime)); // Clamp to reasonable range otherwise
       
       // Safety check to avoid errors if route data isn't loaded
       if (!routeCoordinates || routeCoordinates.length === 0 || !routeDistances || routeDistances.length === 0) {
@@ -764,10 +1149,10 @@
       const baseSpeedMPS = 20; // meters per second (more realistic for smooth movement)
       const distanceIncrement = baseSpeedMPS * animationSpeed * deltaTime;
       
-      // Debug speed consistency
-      if (Math.random() < 0.01) { // Log occasionally
-        console.log(`Speed: ${(baseSpeedMPS * animationSpeed).toFixed(1)} m/s, deltaTime: ${deltaTime.toFixed(3)}s, increment: ${distanceIncrement.toFixed(2)}m`);
-      }
+      // Debug speed consistency - disabled during animation for performance
+      // if (Math.random() < 0.01) { // Log occasionally
+      //   console.log(`Speed: ${(baseSpeedMPS * animationSpeed).toFixed(1)} m/s, deltaTime: ${deltaTime.toFixed(3)}s, increment: ${distanceIncrement.toFixed(2)}m`);
+      // }
       
       // Update current distance along route
       currentRouteDistance += distanceIncrement;
@@ -807,14 +1192,14 @@
         interpolatedPoint[2] = 0;
       }
       
-      // Debug position calculation occasionally
-      if (Math.random() < 0.005) { // Log very occasionally
-        const usedDistances = riderSegment.useSmoothedRoute ? smoothedRouteDistances : routeDistances;
-        const routeSegmentDistance = (usedDistances[riderAfterIdx] - usedDistances[riderBeforeIdx]) * 1000; // km to m
-        const expectedPosition = usedDistances[riderBeforeIdx] + (riderFraction * (usedDistances[riderAfterIdx] - usedDistances[riderBeforeIdx]));
-        const actualPosition = currentRouteDistance / 1000; // m to km
-        console.log(`Position: segment ${riderBeforeIdx}-${riderAfterIdx}, fraction=${riderFraction.toFixed(3)}, route segment=${routeSegmentDistance.toFixed(1)}m, expected=${expectedPosition.toFixed(3)}km, actual=${actualPosition.toFixed(3)}km`);
-      }
+      // Debug position calculation occasionally - DISABLED
+      // if (Math.random() < 0.005) { // Log very occasionally
+      //   const usedDistances = riderSegment.useSmoothedRoute ? smoothedRouteDistances : routeDistances;
+      //   const routeSegmentDistance = (usedDistances[riderAfterIdx] - usedDistances[riderBeforeIdx]) * 1000; // km to m
+      //   const expectedPosition = usedDistances[riderBeforeIdx] + (riderFraction * (usedDistances[riderAfterIdx] - usedDistances[riderBeforeIdx]));
+      //   const actualPosition = currentRouteDistance / 1000; // m to km
+      //   console.log(`Position: segment ${riderBeforeIdx}-${riderAfterIdx}, fraction=${riderFraction.toFixed(3)}, route segment=${routeSegmentDistance.toFixed(1)}m, expected=${expectedPosition.toFixed(3)}km, actual=${actualPosition.toFixed(3)}km`);
+      // }
       
       // Update the rider marker position
       updatePointPosition(interpolatedPoint);
@@ -928,7 +1313,7 @@
       // CAMERA SYSTEM: Only update camera if followPath is enabled
       if (followPath) {
         // 2. TARGET-POINT MODULE
-        const targetPoint = calculateTargetPoint(bikerPos, bikerVel);
+        const targetPoint = calculateTargetPoint(bikerPos, bikerVel, deltaTime);
         
         // 3. FRAMING CONTROLLER
         const bikerScreenPos = getBikerScreenPosition();
@@ -937,19 +1322,21 @@
         // 4. CAMERA SOLVER
         const newCameraState = updateCameraPhysics(targetPoint, zoomGoal, deltaTime, bearing);
         
-        // Apply the new camera state with smooth transitions
-        map.easeTo({
-          ...newCameraState,
-          duration: 0, // Frame-based animation
-          easing: t => t // Linear for smoothest motion
-        });
+        // Apply the new camera state with anti-jitter protection
+        safeCameraUpdate(newCameraState, "MAIN_ANIMATION");
       }
       
       // Update UI elements
       updateProgress();
       
-      // Continue animation
-      animationId = requestAnimationFrame(animateRoute);
+      // Continue animation - but only if we're still supposed to be running
+      // Use setTimeout for consistent 60fps (16.67ms) instead of requestAnimationFrame
+      // This prevents high refresh rate displays from causing jitter
+      if (isAnimationRunning && token === animationToken) {
+        animationId = setTimeout(() => animateRoute(performance.now(), token), 16.67);
+      } else {
+        animationId = null;
+      }
     }
     
     // Helper functions and UI-related code (mostly unchanged)
@@ -1022,13 +1409,13 @@
       // Calculate the actual distance between these points
       const actualDistance = (currentRouteDistance - (routeDistances[prevPointIdx] * 1000)); // in meters
       
-      // Debug gradient calculation occasionally
-      if (Math.random() < 0.02) { // Log occasionally
-        console.log(`Gradient calc: currentElevation=${currentElevation.toFixed(1)}m, prevElevation=${prevElevation.toFixed(1)}m`);
-        console.log(`ElevationChange=${elevationChange.toFixed(1)}m, actualDistance=${actualDistance.toFixed(1)}m`);
-        console.log(`CurrentRouteDistance=${currentRouteDistance.toFixed(1)}m, prevPointDistance=${(routeDistances[prevPointIdx] * 1000).toFixed(1)}m`);
-        console.log(`PrevPointIdx=${prevPointIdx}, lookBehindDistanceKm=${lookBehindDistanceKm.toFixed(2)}km`);
-      }
+      // Debug gradient calculation occasionally - DISABLED
+      // if (Math.random() < 0.02) { // Log occasionally
+      //   console.log(`Gradient calc: currentElevation=${currentElevation.toFixed(1)}m, prevElevation=${prevElevation.toFixed(1)}m`);
+      //   console.log(`ElevationChange=${elevationChange.toFixed(1)}m, actualDistance=${actualDistance.toFixed(1)}m`);
+      //   console.log(`CurrentRouteDistance=${currentRouteDistance.toFixed(1)}m, prevPointDistance=${(routeDistances[prevPointIdx] * 1000).toFixed(1)}m`);
+      //   console.log(`PrevPointIdx=${prevPointIdx}, lookBehindDistanceKm=${lookBehindDistanceKm.toFixed(2)}km`);
+      // }
       
       const currentGradientEl = document.getElementById('current-gradient');
       if (actualDistance > 10) { // Only calculate gradient if we have sufficient distance
@@ -1329,6 +1716,9 @@
           stateTimer = 0;
           zoomGoal = baseZoom;
           
+          // Analyze route for camera hazards
+          analyzeRouteForHazards();
+          
           // Update UI
           document.getElementById('total-distance').textContent = `${totalDistance.toFixed(1)} km`;
           document.getElementById('elevation-gain').textContent = `${Math.round(elevationGain)} m`;
@@ -1345,14 +1735,14 @@
           const elevationMarker = document.getElementById('elevation-marker');
           if (elevationMarker) elevationMarker.style.display = 'none';
           
-          // Set map center to start of route
-          map.flyTo({
+          // Set map center to start of route - use safeCameraUpdate
+          safeCameraUpdate({
             center: [routeCoordinates[0][0], routeCoordinates[0][1]],
             zoom: 13,
             pitch: cameraAngle,
             bearing: 0,
             duration: 1500
-          });
+          }, "INITIAL_SETUP");
           
           // Initialize camera position and state
           // Start with a good initial position slightly behind and above the route start
@@ -1535,7 +1925,7 @@
     // Toggle animation
     function toggleAnimation() {
       const toggleBtn = document.getElementById('toggle-btn');
-      if (animationId) {
+      if (isAnimationRunning) {
         pauseAnimation();
         if (toggleBtn) toggleBtn.textContent = "Start";
       } else {
@@ -1546,7 +1936,15 @@
     
     // Start animation
     function startAnimation() {
-      if (animationId) return; // Already running
+      if (isAnimationRunning) {
+        return; // Already running
+      }
+      
+      // Create unique token for this animation instance
+      animationToken = Date.now() + Math.random();
+      
+      // Set animation flag first
+      isAnimationRunning = true;
       
       // Disable interactions during animation
       map.dragPan.disable();
@@ -1560,14 +1958,18 @@
       // Enable reset button
       document.getElementById('reset-btn').disabled = false;
       
-      // Start animation
-      animationId = requestAnimationFrame(animateRoute);
+      // Start animation loop using setTimeout for consistent 60fps (single entry point)
+      animationId = setTimeout(() => animateRoute(performance.now(), animationToken), 16.67);
     }
     
     // Pause animation
     function pauseAnimation() {
+      // Invalidate token and stop animation flag first
+      animationToken = null;
+      isAnimationRunning = false;
+      
       if (animationId) {
-        cancelAnimationFrame(animationId);
+        clearTimeout(animationId);
         animationId = null;
       }
       
@@ -1606,14 +2008,14 @@
       // Reset camera state
       cameraFOV = baseZoom;
       
-      // Update camera position
-      map.flyTo({
+      // Update camera position - use safeCameraUpdate
+      safeCameraUpdate({
         center: [routeCoordinates[0][0], routeCoordinates[0][1]],
         zoom: 13,
         pitch: cameraAngle,
         bearing: 0,
         duration: 1000
-      });
+      }, "ROUTE_LOAD");
       
       // Reset framing controller
       framingState = "IN_SAFE";
@@ -1712,7 +2114,7 @@
         };
       }
       
-      // Calculate target position
+      // Calculate target position (use default deltaTime for manual positioning)
       const targetPoint = calculateTargetPoint(bikerPos, bikerVel);
       
       // Set the camera position directly for manual positioning
@@ -1722,13 +2124,13 @@
         z: targetPoint.z
       };
       
-      // Jump to the new position
-      map.jumpTo({
+      // Jump to the new position - use safeCameraUpdate
+      safeCameraUpdate({
         center: [targetPoint.x, targetPoint.y],
         zoom: 13,
         bearing: bearing,
         pitch: cameraAngle
-      });
+      }, "ROUTE_SWITCH");
     }
     
     // Calculate bearing between two coordinates
@@ -1862,12 +2264,12 @@
           const riderLng = beforePoint[0] + (afterPoint[0] - beforePoint[0]) * fraction;
           const riderLat = beforePoint[1] + (afterPoint[1] - beforePoint[1]) * fraction;
           
-          // Smoothly fly to rider position
-          map.easeTo({
+          // Smoothly fly to rider position - use safeCameraUpdate
+          safeCameraUpdate({
             center: [riderLng, riderLat],
             zoom: 15, // Nice zoom level to see the rider and surroundings
             duration: 1000 // 1 second smooth transition
-          });
+          }, "RECENTER_BUTTON");
         }
       });
       
@@ -1884,12 +2286,12 @@
           // Convert FOV to mapbox zoom
           const zoomLevel = 21 - ((targetFOV - 40) / 10);
           
-          // Update the map view with new zoom
-          map.easeTo({
+          // Update the map view with new zoom - use safeCameraUpdate
+          safeCameraUpdate({
             zoom: zoomLevel,
             pitch: cameraAngle,
             duration: 500
-          });
+          }, "HEIGHT_SLIDER");
         }
       });
       
